@@ -28,8 +28,23 @@ namespace RetainingWallRebar
         private Func<string, double> _diameterFt;
         private string _message = "Sin elemento armable";
 
-        /// <summary>Elemento resaltado: "zone:N", o una de las claves de Kinds; null = ninguno.</summary>
+        /// <summary>Elemento resaltado al pasar el raton: "zone:N", o una de las claves de Kinds; null = ninguno.</summary>
         private string _highlight;
+
+        /// <summary>Datos de una barra dibujada, para seleccionarla con un clic.</summary>
+        private sealed class BarInfo
+        {
+            public string Key;      // clave de resaltado (familia o "zone:N")
+            public string Label;    // texto de la etiqueta
+            public double U, V;     // punto de anclaje (coordenadas del muro)
+        }
+
+        private readonly List<BarInfo> _infos = new List<BarInfo>();
+        private BarInfo _selected;
+        private const double ClickTol = 4;
+
+        /// <summary>Clave activa: la del raton si esta sobre algo, si no la de la barra seleccionada.</summary>
+        private string ActiveKey => _highlight ?? _selected?.Key;
 
         private double _zoom = 1;
         private Vector _pan;
@@ -96,12 +111,13 @@ namespace RetainingWallRebar
         {
             bool newWall = !ReferenceEquals(_s, s);
             _s = s; _cfg = cfg; _layout = layout; _diameterFt = diameterFt;
-            if (newWall) ResetView(); else Redraw();
+            if (newWall) { _selected = null; ResetView(); }
+            else Redraw();
         }
 
         public void Clear(string message)
         {
-            _s = null; _layout = null;
+            _s = null; _layout = null; _selected = null;
             _message = message;
             Redraw();
         }
@@ -152,8 +168,23 @@ namespace RetainingWallRebar
 
         private void OnUp(object sender, MouseButtonEventArgs e)
         {
+            bool wasDragging = _dragging;
             _dragging = false;
             ReleaseMouseCapture();
+            if (!wasDragging || _s == null) return;
+            Point m = e.GetPosition(this);
+            if ((m - _dragStart).Length > ClickTol) return;   // fue un arrastre, no un clic
+
+            // clic: la barra bajo el cursor (o nada, que quita la seleccion)
+            BarInfo hit = null;
+            VisualTreeHelper.HitTest(this, null, r =>
+            {
+                for (DependencyObject d = r.VisualHit; d != null && d != this; d = VisualTreeHelper.GetParent(d))
+                    if (d is FrameworkElement fe && fe.Tag is BarInfo info) { hit = info; return HitTestResultBehavior.Stop; }
+                return HitTestResultBehavior.Continue;
+            }, new PointHitTestParameters(m));
+            _selected = hit;
+            Redraw();
         }
 
         // ------------------------------------------------------------------
@@ -161,8 +192,8 @@ namespace RetainingWallRebar
         // ------------------------------------------------------------------
         private static string M(double ft) => (ft * FtToM).ToString("0.00", CultureInfo.InvariantCulture);
 
-        private bool Dimmed(string key) => _highlight != null && _highlight != key;
-        private bool Lit(string key) => _highlight == key;
+        private bool Dimmed(string key) => ActiveKey != null && ActiveKey != key;
+        private bool Lit(string key) => ActiveKey == key;
 
         private void Redraw()
         {
@@ -187,19 +218,77 @@ namespace RetainingWallRebar
             double X(double u) => _pan.X + _x0 + u * k;
             double Y(double v) => _pan.Y + _y0 - v * k;
 
+            _infos.Clear();
             DrawConcrete(X, Y);
             DrawFixedFamilies(k, X, Y);
             DrawZones(k, W, X, Y);
+            DrawSelection(W, H, X, Y);
 
             // textos fijos
             Children.Add(Label("zapata", 4, Y(_s.FootingTop) - 8, Brushes.DimGray, 10));
             double uBack = _s.HeelAtU0 ? _s.StemU0Top : _s.StemU1Top;
+            double uFront = _s.HeelAtU0 ? _s.StemU1Top : _s.StemU0Top;
             Children.Add(Label("trasdos", X(uBack) + (_s.HeelAtU0 ? -46 : 6), Y(_s.LenV) - 14, Brushes.DimGray, 10));
+            Children.Add(Label("intrados", X(uFront) + (_s.HeelAtU0 ? 6 : -50), Y(_s.LenV) - 14, Brushes.DimGray, 10));
             Children.Add(Label("H alzado " + M(_s.LenV - _s.FootingTop) + " m" +
-                               (_zoom > 1.0001 ? "   zoom x" + _zoom.ToString("0.0", CultureInfo.InvariantCulture) + " (doble clic: encajar)" : "   rueda: zoom, arrastrar: mover"),
+                               (_zoom > 1.0001 ? "   zoom x" + _zoom.ToString("0.0", CultureInfo.InvariantCulture) + " (doble clic: encajar)" : "   rueda: zoom · arrastrar: mover · clic en una barra: datos"),
                                4, 2, Brushes.DimGray, 10));
             if (_layout != null && _layout.Error != null)
                 Children.Add(Label(_layout.Error, 8, 16, Brushes.Firebrick, 11));
+        }
+
+        /// <summary>
+        /// Etiqueta de la barra seleccionada. La seleccion se guarda por clave y punto de
+        /// anclaje: tras cada redibujo se vuelve a buscar la barra equivalente, asi el texto
+        /// refleja los valores actuales (o desaparece si esa barra ya no existe).
+        /// </summary>
+        private void DrawSelection(double W, double H, Func<double, double> X, Func<double, double> Y)
+        {
+            if (_selected == null) return;
+            BarInfo best = null;
+            double bestD = double.MaxValue;
+            foreach (BarInfo i in _infos)
+            {
+                if (i.Key != _selected.Key) continue;
+                double d = Math.Abs(i.U - _selected.U) + Math.Abs(i.V - _selected.V);
+                if (d < bestD) { bestD = d; best = i; }
+            }
+            if (best == null || bestD > WallSection.Mm(150)) { _selected = null; return; }
+            _selected = best;
+
+            Brush brush = best.Key.StartsWith("zone:")
+                ? ZoneBrushes[int.Parse(best.Key.Substring(5)) % ZoneBrushes.Length]
+                : KindBrush(best.Key);
+            double ax = X(best.U), ay = Y(best.V);
+
+            var ring = new Ellipse { Width = 14, Height = 14, Stroke = brush, StrokeThickness = 2, Fill = Brushes.Transparent, IsHitTestVisible = false };
+            SetLeft(ring, ax - 7); SetTop(ring, ay - 7);
+            Children.Add(ring);
+
+            var text = new TextBlock { Text = best.Label, FontSize = 11, Foreground = Brushes.Black, TextWrapping = TextWrapping.Wrap, MaxWidth = 230 };
+            var box = new Border
+            {
+                Child = text, Background = new SolidColorBrush(Color.FromArgb(0xF2, 0xFF, 0xFF, 0xFF)),
+                BorderBrush = brush, BorderThickness = new Thickness(1.5), CornerRadius = new CornerRadius(3),
+                Padding = new Thickness(6, 4, 6, 4), IsHitTestVisible = false
+            };
+            box.Measure(new Size(240, 200));
+            double bw = box.DesiredSize.Width, bh = box.DesiredSize.Height;
+            double bx = ax + 14, by = ay - bh - 6;
+            if (bx + bw > W - 4) bx = ax - bw - 14;
+            if (bx < 4) bx = 4;
+            if (by < 4) by = ay + 14;
+            if (by + bh > H - 4) by = H - 4 - bh;
+            SetLeft(box, bx); SetTop(box, by);
+            Children.Add(box);
+            Children.Add(new Line { X1 = ax, Y1 = ay, X2 = bx + (bx > ax ? 0 : bw), Y2 = by + bh * 0.5, Stroke = brush, StrokeThickness = 1, IsHitTestVisible = false });
+        }
+
+        private BarInfo Info(string key, string label, double u, double v)
+        {
+            var i = new BarInfo { Key = key, Label = label, U = u, V = v };
+            _infos.Add(i);
+            return i;
         }
 
         private void DrawConcrete(Func<double, double> X, Func<double, double> Y)
@@ -233,7 +322,8 @@ namespace RetainingWallRebar
                 string key = "zone:" + z.Index;
                 Brush brush = ZoneBrushes[z.Index % ZoneBrushes.Length];
                 double op = Lit(key) ? 0.5 : Dimmed(key) ? 0.12 : 0.25;
-                var band = new Polygon { Fill = brush, Opacity = op };
+                string zoneLabel = "Tramo " + (z.Index + 1) + " (de +" + M(z.VFrom - _s.FootingTop) + " a +" + M(z.VTo - _s.FootingTop) + " m)";
+                var band = new Polygon { Fill = brush, Opacity = op, Tag = Info(key, zoneLabel + FaceLines(z), (_s.FaceU0((z.VFrom + z.VTo) * 0.5) + _s.FaceU1((z.VFrom + z.VTo) * 0.5)) * 0.5, (z.VFrom + z.VTo) * 0.5) };
                 band.Points.Add(new Point(X(_s.FaceU0(z.VFrom)), Y(z.VFrom)));
                 band.Points.Add(new Point(X(_s.FaceU1(z.VFrom)), Y(z.VFrom)));
                 band.Points.Add(new Point(X(_s.FaceU1(z.VTo)), Y(z.VTo)));
@@ -253,12 +343,7 @@ namespace RetainingWallRebar
 
                 // etiqueta en la columna de la derecha, con linea de referencia a la banda
                 double vMid = (z.VFrom + z.VTo) * 0.5;
-                string txt = "Tramo " + (z.Index + 1);
-                if (z.Back != null) txt += "\ntrasdos " + z.Back.BarTypeName + " @" + WallSection.ToMm(z.Back.Spacing) + " (" + z.Back.Heights.Count + ")";
-                if (z.Front != null)
-                    txt += z.Cfg.SameBothFaces && z.Back != null
-                        ? "\nintrados igual (" + z.Front.Heights.Count + ")"
-                        : "\nintrados " + z.Front.BarTypeName + " @" + WallSection.ToMm(z.Front.Spacing) + " (" + z.Front.Heights.Count + ")";
+                string txt = "Tramo " + (z.Index + 1) + FaceLines(z);
                 double ly = Math.Max(2, Math.Min(ActualHeight - 44, Y(vMid) - 18));
                 Children.Add(new Line
                 {
@@ -283,13 +368,15 @@ namespace RetainingWallRebar
                     foreach (double v in rf.Heights)
                     {
                         double u = (useU0 ? _s.FaceU0(v) : _s.FaceU1(v)) + sign * (cover + dbV + rf.Db * 0.5);
+                        string tip = "Horizontal " + (back ? "trasdos" : "intrados") + " · Tramo " + (z.Index + 1) + "\n" + rf.BarTypeName +
+                                     " @" + WallSection.ToMm(rf.Spacing) + " mm · " + rf.Heights.Count + " barras en el tramo\ncota +" + M(v - _s.FootingTop) + " m";
                         var dot = new Ellipse
                         {
                             Width = 2 * r, Height = 2 * r,
                             Fill = brush, Stroke = Brushes.Black, StrokeThickness = 0.6,
                             Opacity = Dimmed(key) ? 0.3 : 1,
-                            ToolTip = "Tramo " + (z.Index + 1) + " " + (back ? "trasdos" : "intrados") + ": " + rf.BarTypeName +
-                                      " @" + WallSection.ToMm(rf.Spacing) + " mm, cota +" + M(v - _s.FootingTop) + " m"
+                            ToolTip = tip,
+                            Tag = Info(key, tip, u, v)
                         };
                         SetLeft(dot, X(u) - r);
                         SetTop(dot, Y(v) - r);
@@ -297,6 +384,14 @@ namespace RetainingWallRebar
                     }
                 }
             }
+        }
+
+        private static string FaceLines(ResolvedZone z)
+        {
+            string t = "";
+            if (z.Back != null) t += "\ntrasdos " + z.Back.BarTypeName + " @" + WallSection.ToMm(z.Back.Spacing) + " (" + z.Back.Heights.Count + ")";
+            if (z.Front != null) t += "\nintrados " + z.Front.BarTypeName + " @" + WallSection.ToMm(z.Front.Spacing) + " (" + z.Front.Heights.Count + ")";
+            return t;
         }
 
         /// <summary>
@@ -319,21 +414,27 @@ namespace RetainingWallRebar
                 BarFamilyCfg tr = top ? _cfg.FootingTransverseTop : _cfg.FootingTransverseBottom;
                 SectionBars.Poly p = SectionBars.Transverse(_s, _cfg, top, _diameterFt);
                 if (p != null)
-                    Children.Add(Bar(ToPts(p), p.Db * k, "transverse", "Transversal zapata " + (top ? "superior" : "inferior") + ": " + tr.BarTypeName +
-                                     " @" + tr.SpacingMm.ToString("0") + " mm, patas " + tr.LegMm.ToString("0") + " mm"));
+                {
+                    string tipT = "Transversal zapata " + (top ? "superior" : "inferior") + "\n" + tr.BarTypeName +
+                                  " @" + tr.SpacingMm.ToString("0") + " mm · patas " + tr.LegMm.ToString("0") + " mm";
+                    (double u, double v) mid = p.Pts[p.Pts.Count / 2];
+                    Children.Add(Bar(ToPts(p), p.Db * k, "transverse", tipT, Info("transverse", tipT, (p.Pts[1].u + p.Pts[p.Pts.Count - 2].u) * 0.5, mid.v)));
+                }
 
                 BarFamilyCfg lg = top ? _cfg.FootingLongitudinalTop : _cfg.FootingLongitudinalBottom;
                 SectionBars.LongitudinalSet l = SectionBars.Longitudinal(_s, _cfg, top, _diameterFt);
                 if (l == null || l.Count == 0) continue;
                 double r = Math.Max(l.Db * 0.5 * k, 2);
+                string tipL = "Longitudinal zapata " + (top ? "superior" : "inferior") + "\n" + lg.BarTypeName +
+                              " @" + lg.SpacingMm.ToString("0") + " mm · " + l.Count + " barras";
                 for (int i = 0; i < l.Count; i++)
                 {
                     var dot = new Ellipse
                     {
                         Width = 2 * r, Height = 2 * r, Fill = KindBrush("longitudinal"),
                         Opacity = Dimmed("longitudinal") ? 0.3 : 1,
-                        ToolTip = "Longitudinal zapata " + (top ? "superior" : "inferior") + ": " + lg.BarTypeName +
-                                  " @" + lg.SpacingMm.ToString("0") + " mm (" + l.Count + " barras)"
+                        ToolTip = tipL,
+                        Tag = Info("longitudinal", tipL, l.UAt(i), l.V)
                     };
                     SetLeft(dot, X(l.UAt(i)) - r);
                     SetTop(dot, Y(l.V) - r);
@@ -347,13 +448,14 @@ namespace RetainingWallRebar
                 foreach (FootingReinfCfg r in _cfg.FootingReinforcements)
                 {
                     i++;
-                    SectionBars.Poly p = SectionBars.Reinforcement(_s, _cfg, r, _diameterFt, out _);
+                    SectionBars.Poly p = SectionBars.Reinforcement(_s, _cfg, r, _diameterFt, out _, out _);
                     if (p == null) continue;
                     string len = r.IsCenter
                         ? r.ToeLengthMm.ToString("0") + " hacia puntera + " + r.HeelLengthMm.ToString("0") + " hacia talon desde el eje"
                         : r.LengthMm.ToString("0") + " mm desde el borde";
-                    Children.Add(Bar(ToPts(p), p.Db * k + 1, "reinf", "Refuerzo zapata " + r.Describe + " #" + i + ": " + r.BarTypeName +
-                                     " @" + r.SpacingMm.ToString("0") + " mm, " + len));
+                    string tipR = "Refuerzo zapata " + r.Describe + " #" + i + "\n" + r.BarTypeName + " @" + r.SpacingMm.ToString("0") +
+                                  " mm\n" + len + "\n" + (r.Above ? "encima" : "debajo") + " de la transversal, hueco " + r.GapMm.ToString("0") + " mm";
+                    Children.Add(Bar(ToPts(p), p.Db * k + 1, "reinf", tipR, Info("reinf", tipR, (p.Pts[0].u + p.Pts[1].u) * 0.5, p.Pts[0].v)));
                 }
             }
 
@@ -365,27 +467,30 @@ namespace RetainingWallRebar
                     bool back = f == 0;
                     BarFamilyCfg fam = dowel ? (back ? _cfg.StemDowelBack : _cfg.StemDowelFront)
                                              : (back ? _cfg.StemVerticalBack : _cfg.StemVerticalFront);
-                    SectionBars.Poly p = SectionBars.Vertical(_s, _cfg, back, _diameterFt, dowel);
+                    SectionBars.Poly p = dowel ? SectionBars.Dowel(_s, _cfg, back, _diameterFt, out _) : SectionBars.Vertical(_s, _cfg, back, _diameterFt);
                     if (p == null) continue;
-                    string tip = (dowel ? "Baston " : "Vertical ") + (back ? "trasdos" : "intrados") + ": " + fam.BarTypeName +
-                                 " @" + fam.SpacingMm.ToString("0") + " mm, patilla " + fam.LegMm.ToString("0") + " mm mas alla de la cara opuesta" +
-                                 (dowel ? ", altura " + fam.CutLengthMm.ToString("0") + " mm sobre la zapata" : "");
-                    Children.Add(Bar(ToPts(p), p.Db * k, dowel ? "dowel" : "vertical", tip));
+                    string tip = (dowel ? "Baston " : "Vertical ") + (back ? "trasdos" : "intrados") + "\n" + fam.BarTypeName +
+                                 " @" + fam.SpacingMm.ToString("0") + " mm\n" +
+                                 (dowel ? "anclaje " + fam.EmbedMm.ToString("0") + " mm en zapata · altura " + fam.CutLengthMm.ToString("0") + " mm sobre la zapata"
+                                        : "patilla " + fam.LegMm.ToString("0") + " mm mas alla de la cara opuesta");
+                    (double u, double v) mid = ((p.Pts[0].u + p.Pts[1].u) * 0.5, (p.Pts[0].v + p.Pts[1].v) * 0.5);
+                    Children.Add(Bar(ToPts(p), p.Db * k, dowel ? "dowel" : "vertical", tip, Info(dowel ? "dowel" : "vertical", tip, mid.u, mid.v)));
                 }
             }
         }
 
-        private Polyline Bar(List<Point> pts, double thicknessPx, string kind, string tip)
+        private Polyline Bar(List<Point> pts, double thicknessPx, string kind, string tip, BarInfo info)
         {
             var pl = new Polyline
             {
                 Stroke = KindBrush(kind),
-                StrokeThickness = Math.Max(thicknessPx, 1.5) + (Lit(kind) ? 1.5 : 0),
+                StrokeThickness = Math.Max(thicknessPx, 2) + (Lit(kind) ? 1.5 : 0),
                 StrokeLineJoin = PenLineJoin.Round,
                 StrokeStartLineCap = PenLineCap.Round,
                 StrokeEndLineCap = PenLineCap.Round,
                 Opacity = Dimmed(kind) ? 0.3 : 1,
-                ToolTip = tip
+                ToolTip = tip,
+                Tag = info
             };
             foreach (Point p in pts) pl.Points.Add(p);
             return pl;
