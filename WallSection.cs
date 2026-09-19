@@ -13,6 +13,13 @@ namespace RetainingWallRebar
     /// El origen esta en la esquina (uMin, vMin, wMin) del bounding box local,
     /// de modo que todas las coordenadas locales van de 0 a Len*.
     /// Todas las magnitudes en pies (unidades internas de Revit).
+    ///
+    /// REQUISITO: el solido tiene que ser un PRISMA RECTO a lo largo de DirW, es decir,
+    /// la misma seccion (u,v) en todo el recorrido. Todo lo demas (leer la seccion en
+    /// la rebanada central, extender los arrays por LenW, usar LenU como ancho de
+    /// zapata) da eso por hecho. Probe lo comprueba ANTES de leer nada mas y rechaza
+    /// el elemento entero si no se cumple: un esquinero en L, un contrafuerte o un
+    /// extremo a inglete acabarian con barras fuera del hormigon.
     /// </summary>
     public class WallSection
     {
@@ -32,8 +39,25 @@ namespace RetainingWallRebar
 
         public XYZ P(double u, double v, double w) => Origin + DirU * u + DirV * v + DirW * w;
 
-        private static double Round(double ft) =>
+        /// <summary>Coordenadas locales (u,v,w) de un punto del modelo.</summary>
+        public XYZ ToLocal(XYZ p)
+        {
+            XYZ d = p - Origin;
+            return new XYZ(d.DotProduct(DirU), d.DotProduct(DirV), d.DotProduct(DirW));
+        }
+
+        /// <summary>Punto del modelo expresado en coordenadas locales, en mm, para mensajes.</summary>
+        public string LocalMm(XYZ p)
+        {
+            XYZ l = ToLocal(p);
+            return "u=" + ToMm(l.X) + " v=" + ToMm(l.Y) + " w=" + ToMm(l.Z) + " mm";
+        }
+
+        /// <summary>Pies -> mm redondeados, para mensajes.</summary>
+        public static double ToMm(double ft) =>
             Math.Round(UnitUtils.ConvertFromInternalUnits(ft, UnitTypeId.Millimeters));
+
+        private static double Round(double ft) => ToMm(ft);
 
         private static string Dump(WallSection s) =>
             $"leido B={Round(s.LenU)} H={Round(s.LenV)} L={Round(s.LenW)}:";
@@ -71,9 +95,21 @@ namespace RetainingWallRebar
         {
             LastError = null;
 
-            Solid solid = LargestSolid(host);
-            if (solid == null || solid.Volume < 1e-9)
+            List<Solid> solids = Solids(host);
+            if (solids.Count == 0)
             { LastError = "no se encontro solido en el elemento"; return null; }
+
+            // Si la familia tiene varias extrusiones sin unir, solo se veria la mayor y
+            // se armaria un trozo del muro creyendo que es el muro entero. Se rechaza.
+            Solid solid = solids[0];
+            int significant = solids.Count(x => x.Volume > solid.Volume * 0.001);
+            if (significant > 1)
+            {
+                LastError = "RECHAZADO, el elemento tiene " + significant + " solidos independientes y el plugin " +
+                            "solo sabe leer uno; une las extrusiones en la familia (Unir geometria) o revisa el elemento. " +
+                            "No se ha creado ninguna barra.";
+                return null;
+            }
 
             List<XYZ> pts = Vertices(solid);
             if (pts.Count < 4)
@@ -101,6 +137,18 @@ namespace RetainingWallRebar
                 LenW = w1 - w0,
                 HostSolid = solid
             };
+
+            // --- SEGURIDAD PRIMERO: el solido tiene que ser un prisma recto ---
+            // Se comprueba antes de leer canto, caras o nada mas. Si la seccion no es
+            // constante a lo largo del eje, el bounding box no describe el hormigon y
+            // cualquier barra que se generase podria quedar en el aire (hueco de una L).
+            if (!IsRightPrism(s, cfg, out string why))
+            {
+                LastError = "RECHAZADO, el solido no es un prisma recto (la seccion no es constante a lo largo del eje): " +
+                            why + ". Los muros esquineros en L, los contrafuertes, los escalones y los extremos a " +
+                            "inglete no estan soportados (ver README). No se ha creado ninguna barra.";
+                return null;
+            }
 
             double slice = Mm(cfg.ProbeSliceMm);
             double wMid = s.LenW * 0.5;
@@ -138,6 +186,249 @@ namespace RetainingWallRebar
             s.StemU0Bot = bot.Item1; s.StemU1Bot = bot.Item2;
             s.StemU0Top = top.Item1; s.StemU1Top = top.Item2;
             return s;
+        }
+
+        // ==================================================================
+        // Comprobacion de prisma recto (seccion constante a lo largo del eje)
+        // ==================================================================
+
+        /// <summary>
+        /// True solo si la seccion transversal es la misma en todo el recorrido del eje.
+        /// Son dos comprobaciones independientes y las dos tienen que pasar:
+        ///  1. Muestreo: se corta el solido con rebanadas finas en muchas estaciones del
+        ///     recorrido y se compara cada seccion (extension, area y contorno) con la
+        ///     seccion central. Es la comprobacion directa: si en alguna estacion la
+        ///     seccion es distinta, no es un prisma.
+        ///  2. Caras: en un prisma recto toda cara es paralela al eje o es una tapa en
+        ///     uno de los dos extremos. Una cara perpendicular al eje en el interior
+        ///     del recorrido (el rincon de una L, un contrafuerte, un escalon) o una
+        ///     cara oblicua (inglete) delatan que no lo es. Es exacta y no depende del
+        ///     paso de muestreo, asi que cubre detalles mas estrechos que el paso.
+        /// No hay forma de desactivarla desde config.json: es preferible negarse a
+        /// armar una pieza a armarla mal.
+        /// </summary>
+        private static bool IsRightPrism(WallSection s, AppConfig cfg, out string why)
+        {
+            double tol = Mm(cfg.PrismCheckToleranceMm);
+            if (tol <= 0) tol = Mm(2);
+
+            if (!SectionIsConstant(s, cfg, tol, out why)) return false;
+            if (!FacesAreParallelOrEndCaps(s, tol, out why)) return false;
+            return true;
+        }
+
+        /// <summary>Seccion (u,v) del solido en una estacion w del recorrido.</summary>
+        private sealed class SectionSample
+        {
+            public double W;
+            /// <summary>Area de la seccion y area de cada una de las dos tapas de la rebanada.</summary>
+            public double Area, AreaA, AreaB;
+            public double U0 = double.MaxValue, U1 = double.MinValue;
+            public double V0 = double.MaxValue, V1 = double.MinValue;
+            public List<UV> Vertices = new List<UV>();
+            public List<(UV a, UV b)> Segments = new List<(UV a, UV b)>();
+
+            public string Describe() =>
+                "u " + ToMm(U0) + ".." + ToMm(U1) + ", v " + ToMm(V0) + ".." + ToMm(V1) + " mm, area " +
+                UnitUtils.ConvertFromInternalUnits(Area, UnitTypeId.SquareMeters).ToString("0.000") + " m2";
+        }
+
+        private static bool SectionIsConstant(WallSection s, AppConfig cfg, double tol, out string why)
+        {
+            why = null;
+
+            double step = Mm(cfg.PrismCheckStepMm);
+            if (step <= 0) step = Mm(250);
+            int n = (int)Math.Ceiling(s.LenW / step);
+            n = Math.Max(5, Math.Min(n, 500));
+            double half = Math.Max(Mm(cfg.ProbeSliceMm), Mm(2)) * 0.5;
+
+            // estaciones interiores equiespaciadas; nunca sobre las propias tapas
+            var samples = new SectionSample[n];
+            for (int i = 0; i < n; i++)
+            {
+                double w = s.LenW * (i + 0.5) / n;
+                samples[i] = SampleSection(s, w, half);
+                if (samples[i] == null)
+                { why = "no hay hormigon (o no se pudo cortar el solido) en la estacion w=" + ToMm(w) + " mm"; return false; }
+            }
+
+            // referencia: la seccion central, que es la que despues se usa para armar
+            SectionSample r = samples[n / 2];
+            double areaTol = Math.Max(0.01 * r.Area, tol * 2 * (s.LenU + s.LenV));
+
+            var bad = new List<string>();
+            for (int i = 0; i < n; i++)
+            {
+                if (!SameProfile(r, samples[i], tol, areaTol, out string diff))
+                    bad.Add("w=" + ToMm(samples[i].W) + " mm (" + diff + ")");
+            }
+            if (bad.Count == 0) return true;
+
+            why = "la seccion central (w=" + ToMm(r.W) + " mm: " + r.Describe() + ") no se repite en " +
+                  bad.Count + " de " + n + " estaciones, p.ej. " + string.Join("; ", bad.Take(3)) +
+                  (bad.Count > 3 ? "; ..." : "");
+            return false;
+        }
+
+        private static SectionSample SampleSection(WallSection s, double w, double half)
+        {
+            Solid slab = Intersect(s, -1, s.LenU + 1, -1, s.LenV + 1, w - half, w + half);
+            if (slab == null) return null;
+
+            var sm = new SectionSample { W = w };
+            double ou = s.Origin.DotProduct(s.DirU), ov = s.Origin.DotProduct(s.DirV);
+            UV Proj(XYZ p) => new UV(p.DotProduct(s.DirU) - ou, p.DotProduct(s.DirV) - ov);
+
+            // area: tapas de la rebanada (caras con normal paralela al eje), sumadas por lado
+            foreach (Face f in slab.Faces)
+            {
+                if (!(f is PlanarFace pf)) continue;
+                double d = pf.FaceNormal.DotProduct(s.DirW);
+                if (d > 0.999) sm.AreaB += pf.Area;
+                else if (d < -0.999) sm.AreaA += pf.Area;
+            }
+            sm.Area = Math.Max(sm.AreaA, sm.AreaB);
+            if (sm.Area <= 0) sm.Area = slab.Volume / (2 * half);
+
+            // contorno: todas las aristas proyectadas al plano (u,v). Las aristas
+            // paralelas al eje se proyectan en un punto y no cuentan como segmento.
+            double tiny = Mm(0.5);
+            foreach (Edge e in slab.Edges)
+            {
+                IList<XYZ> pts = e.Tessellate();
+                for (int i = 0; i + 1 < pts.Count; i++)
+                {
+                    UV a = Proj(pts[i]), b = Proj(pts[i + 1]);
+                    AddVertex(sm, a, tiny);
+                    AddVertex(sm, b, tiny);
+                    if (a.DistanceTo(b) > tiny) sm.Segments.Add((a, b));
+                }
+            }
+            return sm;
+        }
+
+        private static void AddVertex(SectionSample sm, UV p, double tiny)
+        {
+            sm.U0 = Math.Min(sm.U0, p.U); sm.U1 = Math.Max(sm.U1, p.U);
+            sm.V0 = Math.Min(sm.V0, p.V); sm.V1 = Math.Max(sm.V1, p.V);
+            foreach (UV q in sm.Vertices)
+                if (q.DistanceTo(p) <= tiny) return;
+            sm.Vertices.Add(p);
+        }
+
+        /// <summary>
+        /// Dos secciones son la misma si coinciden en extension, en area y si cada vertice
+        /// de una cae sobre el contorno de la otra (y viceversa). Comparar vertice contra
+        /// contorno, y no vertice contra vertice, evita falsos rechazos cuando la operacion
+        /// booleana parte una arista en dos en una estacion y no en otra.
+        /// </summary>
+        private static bool SameProfile(SectionSample r, SectionSample s, double tol, double areaTol, out string diff)
+        {
+            diff = null;
+            if (s.AreaA > 0 && s.AreaB > 0 && Math.Abs(s.AreaA - s.AreaB) > areaTol)
+            { diff = "la seccion cambia dentro de la propia rebanada"; return false; }
+            if (Math.Abs(r.U0 - s.U0) > tol || Math.Abs(r.U1 - s.U1) > tol ||
+                Math.Abs(r.V0 - s.V0) > tol || Math.Abs(r.V1 - s.V1) > tol)
+            { diff = "extension distinta: " + s.Describe(); return false; }
+            if (Math.Abs(r.Area - s.Area) > areaTol)
+            { diff = "area distinta: " + s.Describe(); return false; }
+            if (r.Segments.Count == 0 || s.Segments.Count == 0)
+            { diff = "contorno ilegible"; return false; }
+            if (!VerticesOnBoundary(s.Vertices, r.Segments, tol) || !VerticesOnBoundary(r.Vertices, s.Segments, tol))
+            { diff = "contorno distinto"; return false; }
+            return true;
+        }
+
+        private static bool VerticesOnBoundary(List<UV> verts, List<(UV a, UV b)> segs, double tol)
+        {
+            foreach (UV p in verts)
+            {
+                bool on = false;
+                foreach (var sg in segs)
+                    if (DistToSegment(p, sg.a, sg.b) <= tol) { on = true; break; }
+                if (!on) return false;
+            }
+            return true;
+        }
+
+        private static double DistToSegment(UV p, UV a, UV b)
+        {
+            double dx = b.U - a.U, dy = b.V - a.V;
+            double len2 = dx * dx + dy * dy;
+            double t = len2 < 1e-18 ? 0 : Math.Max(0, Math.Min(1, ((p.U - a.U) * dx + (p.V - a.V) * dy) / len2));
+            double px = a.U + t * dx - p.U, py = a.V + t * dy - p.V;
+            return Math.Sqrt(px * px + py * py);
+        }
+
+        /// <summary>
+        /// Comprobacion exacta por caras: en un prisma recto a lo largo de DirW cada cara
+        /// es (a) una tapa perpendicular al eje situada en w=0 o w=LenW, o (b) una cara
+        /// paralela al eje (normal perpendicular a DirW). Cualquier otra cosa (tapa en
+        /// el interior del recorrido, cara oblicua, cara curva no paralela) implica que
+        /// la seccion cambia en algun punto.
+        /// </summary>
+        private static bool FacesAreParallelOrEndCaps(WallSection s, double tol, out string why)
+        {
+            why = null;
+            const double ang = 1e-3;   // seno del angulo admisible, ~0.06 grados
+            double w0 = s.Origin.DotProduct(s.DirW), w1 = w0 + s.LenW;
+
+            foreach (Face f in s.HostSolid.Faces)
+            {
+                if (f is PlanarFace pf)
+                {
+                    double d = Math.Abs(pf.FaceNormal.DotProduct(s.DirW));
+                    double sinToAxis = Math.Sqrt(Math.Max(0, 1 - d * d));
+                    if (sinToAxis < ang)
+                    {
+                        // tapa: solo puede estar en los extremos del recorrido
+                        double w = pf.Origin.DotProduct(s.DirW);
+                        if (Math.Abs(w - w0) > tol && Math.Abs(w - w1) > tol)
+                        {
+                            why = "hay una cara perpendicular al eje en el interior del recorrido (w=" + ToMm(w - w0) +
+                                  " mm): rincon de una L, contrafuerte o escalon";
+                            return false;
+                        }
+                    }
+                    else if (d > ang)
+                    {
+                        double deg = Math.Asin(Math.Min(1, d)) * 180 / Math.PI;
+                        why = "hay una cara oblicua al eje (" + deg.ToString("0.0") +
+                              " grados): extremo a inglete o eje mal detectado";
+                        return false;
+                    }
+                }
+                else if (!CurvedFaceIsParallel(f, s.DirW, ang))
+                {
+                    why = "hay una cara curva que no es paralela al eje";
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        /// <summary>Cara no plana: su normal analitica debe ser perpendicular al eje en toda la cara.</summary>
+        private static bool CurvedFaceIsParallel(Face f, XYZ dirW, double ang)
+        {
+            try
+            {
+                BoundingBoxUV bb = f.GetBoundingBox();
+                const int g = 9;
+                int tested = 0;
+                for (int i = 0; i < g; i++)
+                    for (int j = 0; j < g; j++)
+                    {
+                        var uv = new UV(bb.Min.U + (bb.Max.U - bb.Min.U) * (i + 0.5) / g,
+                                        bb.Min.V + (bb.Max.V - bb.Min.V) * (j + 0.5) / g);
+                        if (!f.IsInside(uv)) continue;
+                        tested++;
+                        if (Math.Abs(f.ComputeNormal(uv).DotProduct(dirW)) > ang) return false;
+                    }
+                // si no se pudo evaluar ningun punto, no se da por buena
+                return tested > 0;
+            }
+            catch { return false; }
         }
 
         // ------------------------------------------------------------------
@@ -251,25 +542,27 @@ namespace RetainingWallRebar
             return f.GetLength() < 1e-6 ? null : f.Normalize();
         }
 
-        public static Solid LargestSolid(Element e)
+        /// <summary>Todos los solidos con volumen del elemento, de mayor a menor.</summary>
+        public static List<Solid> Solids(Element e)
         {
+            var list = new List<Solid>();
             var opt = new Options { DetailLevel = ViewDetailLevel.Fine, ComputeReferences = false };
             GeometryElement ge = e.get_Geometry(opt);
-            if (ge == null) return null;
+            if (ge == null) return list;
 
-            Solid best = null;
-            double bv = 0;
             void Scan(IEnumerable<GeometryObject> objs)
             {
                 foreach (GeometryObject go in objs)
                 {
-                    if (go is Solid sol && sol.Volume > bv) { best = sol; bv = sol.Volume; }
+                    if (go is Solid sol) { if (sol.Volume > 1e-9) list.Add(sol); }
                     else if (go is GeometryInstance gi) Scan(gi.GetInstanceGeometry());
                 }
             }
             Scan(ge);
-            return best;
+            return list.OrderByDescending(x => x.Volume).ToList();
         }
+
+        public static Solid LargestSolid(Element e) => Solids(e).FirstOrDefault();
 
         private static List<XYZ> Vertices(Solid s)
         {

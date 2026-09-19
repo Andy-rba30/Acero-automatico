@@ -59,6 +59,16 @@ namespace RetainingWallRebar
         /// <summary>Espesor de las rebanadas de sondeo geometrico (mm).</summary>
         public double ProbeSliceMm { get; set; } = 10;
 
+        /// <summary>
+        /// Comprobacion de prisma recto (seccion constante a lo largo del eje): separacion
+        /// entre estaciones de muestreo (mm). Siempre se muestrean al menos 5 estaciones.
+        /// La comprobacion no se puede desactivar.
+        /// </summary>
+        public double PrismCheckStepMm { get; set; } = 250;
+
+        /// <summary>Tolerancia geometrica al comparar secciones y posicion de caras (mm).</summary>
+        public double PrismCheckToleranceMm { get; set; } = 2;
+
         /// <summary>Overrides por nombre de tipo de familia.</summary>
         public Dictionary<string, SectionOverride> SectionOverrides { get; set; }
             = new Dictionary<string, SectionOverride>(StringComparer.OrdinalIgnoreCase);
