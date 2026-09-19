@@ -20,6 +20,20 @@ namespace RetainingWallRebar
         public double CutLengthMm { get; set; } = 0;
         /// <summary>Solo bastones: longitud de anclaje recto dentro de la zapata, bajo su cara superior (mm).</summary>
         public double EmbedMm { get; set; } = 500;
+        /// <summary>
+        /// Solo verticales: patilla de coronacion (mm), doblada hacia la cara contraria a la
+        /// altura del recubrimiento de coronacion (la del intrados un diametro mas abajo,
+        /// apilada bajo la del trasdos). 0 = sin patilla.
+        /// </summary>
+        public double CrownLegMm { get; set; } = 0;
+        /// <summary>
+        /// Solo bastones: true = apilado por dentro de la vertical de su cara (tangente a ella,
+        /// en el mismo plano a lo largo del muro, como la segunda capa de una viga); false =
+        /// intercalado media separacion con las verticales, en la misma linea de recubrimiento.
+        /// </summary>
+        public bool Stacked { get; set; } = true;
+        /// <summary>Solo bastones apilados: hueco entre el baston y la vertical (mm). 0 = tocandola.</summary>
+        public double GapMm { get; set; } = 0;
     }
 
     public class SectionOverride
@@ -64,6 +78,9 @@ namespace RetainingWallRebar
     /// <summary>
     /// Refuerzo transversal corto de zapata: barra recta apilada sobre su transversal
     /// (encima o debajo, con un hueco opcional) y alineada con ella a lo largo del muro.
+    /// Hacia fuera (debajo de la inferior, encima de la superior) solo puede llegar hasta
+    /// el recubrimiento: se queda ahi y la transversal se apila por dentro de el; hacia
+    /// dentro no hay limite y las longitudinales se apartan si les cae encima.
     /// Posicion en el ancho:
     ///  "toe"    = puntera: desde el borde de la zapata hacia dentro, LengthMm.
     ///  "heel"   = talon: idem desde el borde del talon.
@@ -110,8 +127,9 @@ namespace RetainingWallRebar
         public BarFamilyCfg StemVerticalBack { get; set; } = new BarFamilyCfg();
         public BarFamilyCfg StemVerticalFront { get; set; } = new BarFamilyCfg();
         /// <summary>
-        /// Bastones de arranque (verticales cortas intercaladas con las enteras). CutLengthMm
-        /// es su altura sobre la cara superior de la zapata. Desactivados por defecto.
+        /// Bastones de arranque (verticales cortas apiladas por dentro de las enteras, o
+        /// intercaladas con ellas). CutLengthMm es su altura sobre la cara superior de la
+        /// zapata. Desactivados por defecto.
         /// </summary>
         public BarFamilyCfg StemDowelBack { get; set; } = new BarFamilyCfg { Enabled = false, CutLengthMm = 2000 };
         public BarFamilyCfg StemDowelFront { get; set; } = new BarFamilyCfg { Enabled = false, CutLengthMm = 2000 };
@@ -285,9 +303,14 @@ namespace RetainingWallRebar
             if (StemDowelBack == null) StemDowelBack = new BarFamilyCfg { Enabled = false, CutLengthMm = 2000 };
             if (StemDowelFront == null) StemDowelFront = new BarFamilyCfg { Enabled = false, CutLengthMm = 2000 };
             // antes, "baston" en una vertical cortaba todas las verticales de esa cara: ahora es
-            // una familia propia intercalada con las enteras
+            // una familia propia apilada con las enteras
             MigrateDowel(StemVerticalBack, StemDowelBack);
             MigrateDowel(StemVerticalFront, StemDowelFront);
+            foreach (BarFamilyCfg f in new[] { StemVerticalBack, StemVerticalFront, StemDowelBack, StemDowelFront })
+            {
+                if (f.CrownLegMm < 0) f.CrownLegMm = 0;
+                if (f.GapMm < 0) f.GapMm = 0;
+            }
             if (string.IsNullOrWhiteSpace(PartitionTemplate)) PartitionTemplate = "MC-{marca}";
             if (!StemZoneModeManual) StemZoneMode = "auto";
         }

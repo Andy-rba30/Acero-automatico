@@ -38,9 +38,13 @@ namespace RetainingWallRebar
             public double CutMin;
             /// <summary>Bastones: la columna de patilla es la longitud de anclaje (EmbedMm).</summary>
             public bool Embed;
+            /// <summary>Verticales: columna de patilla de coronacion.</summary>
+            public bool HasCrown;
+            /// <summary>Bastones: columnas "respecto a la vertical" y hueco.</summary>
+            public bool IsDowel;
             public CheckBox Enabled;
-            public ComboBox Type;
-            public TextBox Spacing, Leg, Cut;
+            public ComboBox Type, Stack;
+            public TextBox Spacing, Leg, Cut, Crown, Gap;
         }
 
         private sealed class ZoneRow
@@ -298,9 +302,11 @@ namespace RetainingWallRebar
             left.Children.Add(new TextBlock
             {
                 Text = "Los tramos se numeran de abajo arriba. En cada tramo la primera barra va a media separacion de su " +
-                       "limite inferior; la ultima del tramo superior respeta el recubrimiento de coronacion. Las cotas del " +
-                       "modo editable se miden desde la cara superior de la zapata y se aplican a todos los muros seleccionados; " +
-                       "un tramo que quede por encima de la coronacion de un muro se omite en ese muro.",
+                       "limite inferior; la ultima del tramo superior respeta el recubrimiento de coronacion y para bajo las " +
+                       "patillas de coronacion si las hay. El tramo inferior sigue ademas hacia abajo dentro de la zapata, con su " +
+                       "misma separacion, hasta quedar sobre las patillas de las verticales y la parrilla inferior (envuelto por " +
+                       "las patillas). Las cotas del modo editable se miden desde la cara superior de la zapata y se aplican a " +
+                       "todos los muros seleccionados; un tramo que quede por encima de la coronacion de un muro se omite en ese muro.",
                 TextWrapping = TextWrapping.Wrap,
                 Foreground = Brushes.DimGray,
                 Margin = new Thickness(4, 6, 4, 0)
@@ -604,7 +610,7 @@ namespace RetainingWallRebar
             var rmsgs = new List<string>();
             foreach (FootingReinfCfg r in scratch.FootingReinforcements)
             {
-                SectionBars.Reinforcement(s, scratch, r, DiameterFt, out string warn, out _);
+                SectionBars.Reinforcement(s, scratch, r, DiameterFt, out string warn);
                 if (warn != null) rmsgs.Add(warn);
             }
             if (_reinfMessage != null) _reinfMessage.Text = string.Join(Environment.NewLine, rmsgs);
@@ -628,13 +634,10 @@ namespace RetainingWallRebar
         {
             var group = new GroupBox { Header = "Verticales del alzado y zapata", Padding = new Thickness(4), Margin = new Thickness(0, 6, 0, 0) };
             var grid = new Grid();
-            string[] headers = { "Familia", "Activa", "Tipo de barra", "Separacion (mm)", "Patilla / pata / anclaje (mm)", "Altura baston (mm)" };
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            string[] headers = { "Familia", "Activa", "Tipo de barra", "Separacion (mm)", "Patilla / pata / anclaje (mm)", "Altura baston (mm)",
+                                 "Patilla coronacion (mm)", "Respecto a la vertical", "Hueco (mm)" };
+            for (int c = 0; c < headers.Length; c++)
+                grid.ColumnDefinitions.Add(new ColumnDefinition { Width = c == 2 ? new GridLength(1, GridUnitType.Star) : GridLength.Auto });
 
             grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             for (int c = 0; c < headers.Length; c++)
@@ -645,11 +648,11 @@ namespace RetainingWallRebar
             }
 
             string legV = "Patilla en zapata: cruza bajo la pantalla hacia el lado contrario y sobresale esta longitud de la cara opuesta del alzado";
-            AddFamily(grid, "Vertical trasdos (alzado)", c => c.StemVerticalBack, leg: true, cut: false, legHint: legV);
-            AddFamily(grid, "Vertical intrados (alzado)", c => c.StemVerticalFront, leg: true, cut: false, legHint: legV);
+            AddFamily(grid, "Vertical trasdos (alzado)", c => c.StemVerticalBack, leg: true, cut: false, legHint: legV, crown: true);
+            AddFamily(grid, "Vertical intrados (alzado)", c => c.StemVerticalFront, leg: true, cut: false, legHint: legV, crown: true);
             string legD = "Anclaje recto dentro de la zapata, medido desde su cara superior hacia abajo (sin patilla)";
-            AddFamily(grid, "Baston trasdos (arranque)", c => c.StemDowelBack, leg: true, cut: true, legHint: legD, cutMin: 1, embed: true);
-            AddFamily(grid, "Baston intrados (arranque)", c => c.StemDowelFront, leg: true, cut: true, legHint: legD, cutMin: 1, embed: true);
+            AddFamily(grid, "Baston trasdos (arranque)", c => c.StemDowelBack, leg: true, cut: true, legHint: legD, cutMin: 1, embed: true, dowel: true);
+            AddFamily(grid, "Baston intrados (arranque)", c => c.StemDowelFront, leg: true, cut: true, legHint: legD, cutMin: 1, embed: true, dowel: true);
             AddFamily(grid, "Transversal inferior (zapata)", c => c.FootingTransverseBottom, leg: true, cut: false, legHint: "Pata vertical en los extremos (hacia arriba)");
             AddFamily(grid, "Transversal superior (zapata)", c => c.FootingTransverseTop, leg: true, cut: false, legHint: "Pata vertical en los extremos (hacia abajo, por dentro de las de la inferior)");
             AddFamily(grid, "Longitudinal inferior (zapata)", c => c.FootingLongitudinalBottom, leg: false, cut: false, legHint: null);
@@ -662,12 +665,16 @@ namespace RetainingWallRebar
             panel.Children.Add(new TextBlock
             {
                 Text = "Trasdos = cara del talon (vuelo mayor de zapata). El tipo de barra se busca por nombre exacto o " +
-                       "parcial entre los tipos cargados en el proyecto. La patilla de las verticales se apoya sobre la parrilla " +
-                       "inferior, cruza bajo la pantalla y sobresale la longitud indicada de la cara opuesta; las patillas van " +
-                       "apiladas (la del intrados sobre la del trasdos). Los bastones son barras rectas que nacen dentro de la " +
-                       "zapata con la longitud de anclaje indicada bajo su cara superior y se cortan a la altura indicada sobre " +
-                       "la zapata, intercaladas media separacion con las verticales enteras de su cara: en el arranque la " +
-                       "separacion real queda a la mitad.",
+                       "parcial entre los tipos cargados en el proyecto. La patilla inferior de las verticales se apoya sobre " +
+                       "lo mas alto de la parrilla inferior, cruza bajo la pantalla y sobresale la longitud indicada de la cara " +
+                       "opuesta; las patillas van apiladas (la del intrados sobre la del trasdos). La patilla de coronacion " +
+                       "(0 = sin patilla) se dobla hacia la cara contraria a la altura del recubrimiento de coronacion, la del " +
+                       "intrados un diametro mas abajo, y llega como mucho hasta la vertical opuesta (tangente a ella); los " +
+                       "horizontales del tramo superior paran debajo de ellas. Los bastones son barras rectas que nacen dentro " +
+                       "de la zapata con la longitud de anclaje indicada bajo su cara superior y se cortan a la altura indicada " +
+                       "sobre la zapata: apilados por dentro de la vertical de su cara (tocandola, o con el hueco indicado; los " +
+                       "horizontales de esa altura se apoyan en el baston) o intercalados media separacion con las verticales en " +
+                       "su misma linea (a trazos en el esquema; en el arranque la separacion real queda a la mitad).",
                 TextWrapping = TextWrapping.Wrap,
                 Foreground = Brushes.DimGray,
                 Margin = new Thickness(4, 6, 4, 0)
@@ -676,13 +683,14 @@ namespace RetainingWallRebar
             return group;
         }
 
-        private void AddFamily(Grid grid, string name, Func<AppConfig, BarFamilyCfg> select, bool leg, bool cut, string legHint, double cutMin = 0, bool embed = false)
+        private void AddFamily(Grid grid, string name, Func<AppConfig, BarFamilyCfg> select, bool leg, bool cut, string legHint,
+                               double cutMin = 0, bool embed = false, bool crown = false, bool dowel = false)
         {
             int r = grid.RowDefinitions.Count;
             grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
             BarFamilyCfg fam = select(_cfg);
-            var row = new FamilyRow { Select = select, Name = name, HasLeg = leg, HasCut = cut, CutMin = cutMin, Embed = embed };
+            var row = new FamilyRow { Select = select, Name = name, HasLeg = leg, HasCut = cut, CutMin = cutMin, Embed = embed, HasCrown = crown, IsDowel = dowel };
 
             var label = new TextBlock { Text = name, Margin = Pad, VerticalAlignment = VerticalAlignment.Center };
             Grid.SetRow(label, r); Grid.SetColumn(label, 0);
@@ -713,6 +721,31 @@ namespace RetainingWallRebar
             Grid.SetRow(row.Cut, r); Grid.SetColumn(row.Cut, 5);
             grid.Children.Add(row.Cut);
 
+            row.Crown = NumBox(fam.CrownLegMm);
+            if (!crown) row.Crown.Text = "-";
+            else row.Crown.ToolTip = "Patilla en coronacion hacia la cara contraria, como mucho hasta la vertical opuesta. 0 = sin patilla";
+            Grid.SetRow(row.Crown, r); Grid.SetColumn(row.Crown, 6);
+            grid.Children.Add(row.Crown);
+
+            if (dowel)
+            {
+                row.Stack = new ComboBox { Margin = Pad, MinWidth = 150, VerticalAlignment = VerticalAlignment.Center };
+                row.Stack.Items.Add("Apilado por dentro");
+                row.Stack.Items.Add("Intercalado en el mismo plano");
+                row.Stack.SelectedIndex = fam.Stacked ? 0 : 1;
+                row.Stack.ToolTip = "Apilado por dentro: tangente a la vertical de su cara, en su misma linea a lo largo del muro (como la " +
+                                    "segunda capa de una viga); los horizontales de esa altura se apoyan en el baston.\n" +
+                                    "Intercalado: en la misma linea de recubrimiento que la vertical, desplazado media separacion a lo largo del muro.";
+                Grid.SetRow(row.Stack, r); Grid.SetColumn(row.Stack, 7);
+                grid.Children.Add(row.Stack);
+            }
+
+            row.Gap = NumBox(fam.GapMm);
+            if (!dowel) row.Gap.Text = "-";
+            else row.Gap.ToolTip = "Hueco entre el baston apilado y la vertical. 0 = tocandola";
+            Grid.SetRow(row.Gap, r); Grid.SetColumn(row.Gap, 8);
+            grid.Children.Add(row.Gap);
+
             // los campos numericos solo cuentan con la familia activa
             RoutedEventHandler sync = (s, e) =>
             {
@@ -721,6 +754,9 @@ namespace RetainingWallRebar
                 row.Spacing.IsEnabled = on;
                 row.Leg.IsEnabled = on && leg;
                 row.Cut.IsEnabled = on && cut;
+                row.Crown.IsEnabled = on && crown;
+                if (row.Stack != null) row.Stack.IsEnabled = on;
+                row.Gap.IsEnabled = on && dowel && (row.Stack == null || row.Stack.SelectedIndex == 0);
             };
             row.Enabled.Checked += sync;
             row.Enabled.Unchecked += sync;
@@ -732,6 +768,9 @@ namespace RetainingWallRebar
             row.Spacing.TextChanged += (s, e) => Refresh();
             row.Leg.TextChanged += (s, e) => Refresh();
             row.Cut.TextChanged += (s, e) => Refresh();
+            row.Crown.TextChanged += (s, e) => Refresh();
+            row.Gap.TextChanged += (s, e) => Refresh();
+            if (row.Stack != null) row.Stack.SelectionChanged += (s, e) => { sync(null, null); Refresh(); };
 
             _rows.Add(row);
         }
@@ -768,10 +807,12 @@ namespace RetainingWallRebar
             panel.Children.Add(new TextBlock
             {
                 Text = "Barras rectas apiladas sobre la transversal superior o inferior (encima o debajo, tocandola con hueco 0, " +
-                       "como lapices apilados) y alineadas con ella a lo largo del muro. Puntera y talon: longitud desde el borde " +
-                       "de la zapata hacia dentro (puede pasar bajo la pantalla). Centro: longitud hacia la puntera y hacia el " +
-                       "talon desde el eje de la pantalla en su base. Si el refuerzo queda a la altura de las longitudinales de su " +
-                       "capa, se avisa aqui y se pide confirmacion al armar.",
+                       "como lapices apilados) y alineadas con ella a lo largo del muro. Hacia fuera (debajo de la inferior, " +
+                       "encima de la superior) el refuerzo solo puede llegar hasta el recubrimiento: se queda ahi y la transversal, " +
+                       "las longitudinales y las patillas se apilan por dentro de el con el hueco indicado. Hacia dentro no hay " +
+                       "limite: si cae sobre las longitudinales de su capa, estas se apartan hacia dentro y las patillas con ellas. " +
+                       "Puntera y talon: longitud desde el borde de la zapata hacia dentro (puede pasar bajo la pantalla). Centro: " +
+                       "longitud hacia la puntera y hacia el talon desde el eje de la pantalla en su base.",
                 TextWrapping = TextWrapping.Wrap,
                 Foreground = Brushes.DimGray,
                 Margin = new Thickness(4, 4, 4, 0)
@@ -1151,6 +1192,13 @@ namespace RetainingWallRebar
                     if (row.Embed) fam.EmbedMm = v; else fam.LegMm = v;
                 }
                 if (row.HasCut && TryNum(row.Cut, row.Name + ", altura", row.CutMin, errors, out v)) fam.CutLengthMm = v;
+                if (row.HasCrown && TryNum(row.Crown, row.Name + ", patilla de coronacion", 0, errors, out v)) fam.CrownLegMm = v;
+                if (row.IsDowel)
+                {
+                    fam.Stacked = row.Stack == null || row.Stack.SelectedIndex == 0;
+                    if (!fam.Stacked) fam.GapMm = Math.Max(0, fam.GapMm);
+                    else if (TryNum(row.Gap, row.Name + ", hueco", 0, errors, out v)) fam.GapMm = v;
+                }
             }
 
             // refuerzos de zapata
@@ -1192,6 +1240,8 @@ namespace RetainingWallRebar
                 Mark(row.Spacing, !on || NumOk(row.Spacing, 1));
                 Mark(row.Leg, !on || !row.HasLeg || NumOk(row.Leg, row.Embed ? 1 : 0));
                 Mark(row.Cut, !on || !row.HasCut || NumOk(row.Cut, row.CutMin));
+                Mark(row.Crown, !on || !row.HasCrown || NumOk(row.Crown, 0));
+                Mark(row.Gap, !on || !row.IsDowel || NumOk(row.Gap, 0));
             }
 
             bool manual = _modeManual.IsChecked == true;
@@ -1235,28 +1285,6 @@ namespace RetainingWallRebar
         private void OnBuild(object sender, RoutedEventArgs e)
         {
             if (!Collect()) return;
-
-            // refuerzos que se solapan con las longitudinales: se arma solo si el usuario lo confirma
-            WallSection s = SelectedSection() ?? _items.Where(i => i.CanBuild).Select(i => i.Straight ?? i.Corner.Wings[0]).FirstOrDefault();
-            if (s != null)
-            {
-                var crossing = new List<string>();
-                foreach (FootingReinfCfg r in _cfg.FootingReinforcements)
-                {
-                    SectionBars.Reinforcement(s, _cfg, r, DiameterFt, out string warn, out bool crosses);
-                    if (crosses) crossing.Add(warn);
-                }
-                if (crossing.Count > 0)
-                {
-                    var res = MessageBox.Show(this,
-                        "Hay refuerzos de zapata que cruzan las longitudinales de su capa a la misma altura (las barras se solaparian):" +
-                        Environment.NewLine + Environment.NewLine + string.Join(Environment.NewLine, crossing) +
-                        Environment.NewLine + Environment.NewLine + "¿Armar de todas formas?",
-                        "Refuerzos que cruzan las longitudinales", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
-                    if (res != MessageBoxResult.Yes) return;
-                }
-            }
-
             Result = _cfg;
             DialogResult = true;
             Close();

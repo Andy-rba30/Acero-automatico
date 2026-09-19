@@ -331,11 +331,16 @@ namespace RetainingWallRebar
             }
             int stemThrough = reachesFar[through] ? through : (reachesFar[1 - through] ? 1 - through : -1);
 
-            // reparto de horizontales de cada ala (los del ala no pasante suben un diametro)
+            // reparto de horizontales de cada ala (los del ala no pasante suben un diametro; con
+            // malla cruzada sus patillas quedan mas altas y las barras que bajan a la zapata lo saben)
             Func<string, double> diameterFt = n => RebarGenerator.FindBarType(doc, n).BarNominalDiameter;
+            double transBottomDb = cfg.FootingTransverseBottom.Enabled ? diameterFt(cfg.FootingTransverseBottom.BarTypeName) : 0;
             var layouts = new ZoneLayout[2];
             for (int k = 0; k < 2; k++)
-                layouts[k] = StemZones.Resolve(Wings[k], cfg, diameterFt, k != through);
+            {
+                bool swap = cfg.CornerFootingMeshBoth && k != through;
+                layouts[k] = StemZones.Resolve(Wings[k], cfg, diameterFt, k != through, swap, transBottomDb);
+            }
 
             var plans = new WingPlan[2];
             for (int k = 0; k < 2; k++)
@@ -367,8 +372,8 @@ namespace RetainingWallRebar
                     p.HorW1 = s.StemReach - cov;
                     bool outerIsU0 = s.OtherSideU > 0;
                     bool otherOuterIsU0 = o.OtherSideU > 0;
-                    p.CornerU0 = MakeCorner(doc, cfg, s, o, layouts[1 - k], outerIsU0 ? otherOuterIsU0 : !otherOuterIsU0);
-                    p.CornerU1 = MakeCorner(doc, cfg, s, o, layouts[1 - k], outerIsU0 ? !otherOuterIsU0 : otherOuterIsU0);
+                    p.CornerU0 = MakeCorner(cfg, s, o, layouts[1 - k], outerIsU0 ? otherOuterIsU0 : !otherOuterIsU0, diameterFt);
+                    p.CornerU1 = MakeCorner(cfg, s, o, layouts[1 - k], outerIsU0 ? !otherOuterIsU0 : otherOuterIsU0, diameterFt);
                 }
                 p.ShiftHorizontals = k != through;
 
@@ -397,17 +402,19 @@ namespace RetainingWallRebar
         /// <summary>
         /// Esquina para los horizontales de una cara de s: la pata sigue la linea de barra
         /// horizontal de la otra ala en su cara emparejada (otherU0: cara u=min de la otra
-        /// ala). El diametro de esa barra depende del tramo de altura en el que este.
+        /// ala). El diametro de esa barra depende del tramo de altura en el que este, y su
+        /// apoyo (vertical o baston apilado) de la altura (SectionBars.HorizontalOffset).
         /// </summary>
-        private static CornerFace MakeCorner(Document doc, AppConfig cfg, WallSection s, WallSection o, ZoneLayout otherZones, bool otherU0)
+        private static CornerFace MakeCorner(AppConfig cfg, WallSection s, WallSection o, ZoneLayout otherZones, bool otherU0,
+                                             Func<string, double> diameterFt)
         {
             bool otherBack = otherU0 == o.HeelAtU0;
-            BarFamilyCfg fv = otherBack ? cfg.StemVerticalBack : cfg.StemVerticalFront;
-            double dbV = RebarGenerator.FindBarType(doc, fv.BarTypeName).BarNominalDiameter;
-            double baseOff = Mm(cfg.CoverStemMm) + dbV;
             double sign = otherU0 ? +1 : -1;
             Func<double, double> otherU = v =>
-                (otherU0 ? o.FaceU0(v) : o.FaceU1(v)) + sign * (baseOff + otherZones.DiameterAt(v, otherBack) * 0.5);
+            {
+                double db = otherZones.DiameterAt(v, otherBack);
+                return (otherU0 ? o.FaceU0(v) : o.FaceU1(v)) + sign * (SectionBars.HorizontalOffset(o, cfg, otherBack, v, db, diameterFt) + db * 0.5);
+            };
 
             // la pata no puede salirse del tramo recto de la otra ala
             double available = Math.Max(0, o.LenW - Mm(cfg.CoverEndMm));

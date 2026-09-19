@@ -14,8 +14,10 @@ namespace RetainingWallRebar
         public double Spacing;
         /// <summary>Cota de la primera barra y limite superior de las barras de este tramo (pies).</summary>
         public double VStart, VEnd;
-        /// <summary>Cotas de todas las barras del tramo (pies, locales al muro).</summary>
+        /// <summary>Cotas de todas las barras del tramo (pies, locales al muro), de abajo arriba; las de la zapata primero.</summary>
         public List<double> Heights = new List<double>();
+        /// <summary>Cuantas de esas barras bajan a la zapata (solo el tramo inferior).</summary>
+        public int FootingCount;
     }
 
     /// <summary>Un tramo de altura del alzado ya resuelto para un muro concreto.</summary>
@@ -26,6 +28,8 @@ namespace RetainingWallRebar
         public StemZoneCfg Cfg;
         /// <summary>Limites del tramo (pies, locales al muro; VFrom del primero = cara superior de zapata).</summary>
         public double VFrom, VTo;
+        /// <summary>Cota inferior real de las barras del tramo: por debajo de VFrom si el tramo inferior baja a la zapata.</summary>
+        public double VLow;
         public bool IsTop;
         /// <summary>null si esa cara esta desactivada.</summary>
         public ResolvedFace Back, Front;
@@ -61,7 +65,10 @@ namespace RetainingWallRebar
     /// tramo termina en su cota TopMm (medida sobre la zapata) y el ultimo llega a
     /// coronacion. Dentro de cada tramo la primera barra va a media separacion de su
     /// limite inferior y las siguientes cada "separacion"; en el tramo superior la ultima
-    /// barra respeta el recubrimiento de coronacion.
+    /// barra respeta el recubrimiento de coronacion o para bajo las patillas de
+    /// coronacion si las hay. El tramo inferior sigue ademas hacia abajo dentro de la
+    /// zapata, con su misma separacion, hasta quedar sobre las patillas de las verticales
+    /// y la parrilla inferior: asi los horizontales quedan envueltos por las patillas.
     /// </summary>
     public static class StemZones
     {
@@ -71,7 +78,10 @@ namespace RetainingWallRebar
         /// <param name="cfg">Configuracion (tramos, recubrimientos, caras activas).</param>
         /// <param name="diameterFt">Diametro nominal (pies) a partir del nombre de tipo de barra.</param>
         /// <param name="shiftByDiameter">Sube cada barra un diametro (ala no pasante de un esquinero).</param>
-        public static ZoneLayout Resolve(WallSection s, AppConfig cfg, Func<string, double> diameterFt, bool shiftByDiameter)
+        /// <param name="swapFooting">Capas de zapata intercambiadas (ala no pasante con malla cruzada): las patillas quedan mas altas.</param>
+        /// <param name="otherTransDb">Diametro de la transversal inferior del otro ala en ese caso.</param>
+        public static ZoneLayout Resolve(WallSection s, AppConfig cfg, Func<string, double> diameterFt, bool shiftByDiameter,
+                                         bool swapFooting = false, double otherTransDb = 0)
         {
             var res = new ZoneLayout();
             List<StemZoneCfg> zones = cfg.StemHorizontalZones ?? new List<StemZoneCfg>();
@@ -106,6 +116,8 @@ namespace RetainingWallRebar
             }
 
             double coverTop = WallSection.Mm(cfg.CoverStemTopMm);
+            double topLimit = SectionBars.StemTopLimit(s, cfg, diameterFt);
+            double bottomLimit = SectionBars.StemBottomLimit(s, cfg, diameterFt, swapFooting, otherTransDb);
             double from = 0;
             for (int i = 0; i < zones.Count; i++)
             {
@@ -122,8 +134,9 @@ namespace RetainingWallRebar
                     VFrom = s.FootingTop + from, VTo = s.FootingTop + to,
                     IsTop = isTop
                 };
-                if (cfg.StemHorizontalBackEnabled) z.Back = ResolveFace(z, zones[i], true, s, coverTop, diameterFt, shiftByDiameter, res);
-                if (cfg.StemHorizontalFrontEnabled) z.Front = ResolveFace(z, zones[i], false, s, coverTop, diameterFt, shiftByDiameter, res);
+                z.VLow = z.VFrom;
+                if (cfg.StemHorizontalBackEnabled) z.Back = ResolveFace(z, zones[i], true, s, coverTop, topLimit, bottomLimit, diameterFt, shiftByDiameter, res);
+                if (cfg.StemHorizontalFrontEnabled) z.Front = ResolveFace(z, zones[i], false, s, coverTop, topLimit, bottomLimit, diameterFt, shiftByDiameter, res);
                 res.Zones.Add(z);
                 from = to;
                 if (isTop)
@@ -138,7 +151,7 @@ namespace RetainingWallRebar
         }
 
         private static ResolvedFace ResolveFace(ResolvedZone z, StemZoneCfg cfg, bool back, WallSection s, double coverTop,
-                                                Func<string, double> diameterFt, bool shift, ZoneLayout res)
+                                                double topLimit, double bottomLimit, Func<string, double> diameterFt, bool shift, ZoneLayout res)
         {
             var f = new ResolvedFace
             {
@@ -152,12 +165,26 @@ namespace RetainingWallRebar
                 return f;
             }
             f.VStart = z.VFrom + f.Spacing * 0.5 + (shift ? f.Db : 0);
-            f.VEnd = z.IsTop ? s.LenV - coverTop - f.Db : z.VTo;
+            // el tramo superior para bajo el recubrimiento de coronacion y bajo las patillas de coronacion
+            f.VEnd = z.IsTop ? Math.Min(s.LenV - coverTop - f.Db, topLimit - f.Db * 0.5) : z.VTo;
             for (double v = f.VStart; v <= f.VEnd + 1e-9; v += f.Spacing) f.Heights.Add(v);
             if (f.Heights.Count == 0)
                 res.Warnings.Add("tramo " + (z.Index + 1) + " " + (back ? "trasdos" : "intrados") +
                                  ": no cabe ninguna barra (tramo de " + WallSection.ToMm(z.VTo - z.VFrom) + " mm con separacion " +
                                  WallSection.ToMm(f.Spacing) + " mm)");
+
+            // el tramo inferior sigue hacia abajo dentro de la zapata, con la misma separacion,
+            // hasta quedar tangente sobre las patillas de las verticales / la parrilla inferior
+            if (z.Index == 0)
+            {
+                double vMin = bottomLimit + f.Db * 0.5;
+                var below = new List<double>();
+                for (double v = f.VStart - f.Spacing; v >= vMin - 1e-9; v -= f.Spacing) below.Add(v);
+                below.Reverse();
+                f.Heights.InsertRange(0, below);
+                f.FootingCount = below.Count;
+                if (below.Count > 0) z.VLow = Math.Min(z.VLow, below[0] - f.Db * 0.5);
+            }
             return f;
         }
     }

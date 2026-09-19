@@ -105,8 +105,17 @@ verticales no cambian: una sola distribución y diámetro en toda la altura.
   (con aviso).
 - Dentro de cada tramo la primera barra va a media separación de su límite
   inferior y las siguientes cada "separación"; la última del tramo superior
-  respeta el recubrimiento de coronación. Con un solo tramo el reparto es el
-  mismo que en las versiones anteriores.
+  respeta el recubrimiento de coronación y, si las verticales llevan patilla de
+  coronación, para tangente por debajo de la patilla más baja.
+- El tramo inferior sigue además **hacia abajo dentro de la zapata**, con su
+  mismo tipo de barra y separación y en las dos caras, hasta quedar tangente
+  sobre la patilla más alta de las verticales (o sobre la parrilla inferior si
+  no hay verticales): así los horizontales quedan envueltos por las patillas
+  de arriba y de abajo. Esas barras van siempre barra a barra, también con
+  bandas activadas; el recuento "barras / cara" las incluye y el esquema
+  prolonga la banda del tramo hasta ellas.
+- Cada horizontal se apoya en la vertical de su cara o, a la altura de un
+  bastón apilado por dentro, en el bastón (`SectionBars.HorizontalOffset`).
 - El reparto lo calcula `StemZones.Resolve`, una función sin efectos que usan
   tanto la ventana (esquema y recuento de barras) como el generador, así lo que
   se dibuja es lo que se crea. Con `stemHorizontalBandMm` > 0 cada tramo se
@@ -146,14 +155,19 @@ Al lanzar el comando con uno o varios muros seleccionados se abre una ventana:
    se resalta su tramo, y cada punto muestra su tramo, tipo y cota. Debajo de
    la tabla aparecen los avisos (tramo sin barras, cota fuera de la altura,
    cotas no crecientes).
-3. **Verticales del alzado y zapata**: para cada una de las seis familias, si
+3. **Verticales del alzado y zapata**: para cada una de las ocho familias, si
    está activa, el **tipo de barra** (desplegable con los `RebarBarType` cargados
    en el proyecto; se puede escribir un nombre parcial), la separación, la
-   patilla/pata donde aplica y la longitud de bastón en las verticales.
+   patilla/pata/anclaje donde aplica, la altura de los bastones, la **patilla de
+   coronación** de las verticales (0 = sin patilla) y, en los bastones, si van
+   **apilados por dentro** de la vertical (con su hueco) o **intercalados** en
+   el mismo plano.
 4. **Refuerzos transversales de zapata**: tabla con un refuerzo por fila (capa,
-   posición puntera/talón/centro, tipo, separación y longitudes) con botones
-   para añadir y quitar; los avisos (longitud que no asoma de la pantalla,
-   barra acortada al ancho de la zapata) aparecen debajo.
+   posición puntera/talón/centro, tipo, separación, longitudes, encima/debajo
+   de la transversal y hueco) con botones para añadir y quitar; los avisos
+   (longitud que no asoma de la pantalla, barra acortada al ancho de la zapata)
+   aparecen debajo. Las barras que se apartan por un refuerzo lo dicen en su
+   etiqueta del esquema.
 5. **Recubrimientos** y **opciones**: horizontales por bandas, ala pasante por
    defecto, pata de solape en esquina y malla de zapata en el bloque.
 6. **Armar** crea la armadura con esos valores solo para esta ejecución.
@@ -228,10 +242,10 @@ posición en coordenadas locales del muro (del ala, en un esquinero).
 
 | Familia | Colocación |
 |---|---|
-| Vertical trasdós | sigue la cara inclinada, se apoya sobre la parrilla inferior y su patilla cruza bajo la pantalla hasta sobresalir `legMm` de la cara opuesta |
-| Vertical intradós | ídem en sentido contrario, con la patilla apilada un diámetro sobre la del trasdós |
-| Bastón trasdós / intradós (opcional) | barra recta que nace dentro de la zapata con un anclaje `embedMm` bajo su cara superior, sigue la cara y se corta a `cutLengthMm` sobre la zapata; intercalada media separación con las verticales enteras de su cara |
-| Reparto horizontal alzado ×2 caras | por tramos de altura (1 a 3), barra a barra (exacto con el talud) o por bandas; en L con pata en la esquina |
+| Vertical trasdós | sigue la cara inclinada, se apoya sobre lo más alto de la parrilla inferior y su patilla cruza bajo la pantalla hasta sobresalir `legMm` de la cara opuesta; con `crownLegMm` > 0 lleva además patilla de coronación hacia la cara contraria, a la altura del recubrimiento de coronación y como mucho hasta la vertical opuesta (tangente a ella) |
+| Vertical intradós | ídem en sentido contrario, con la patilla inferior apilada un diámetro sobre la del trasdós y la de coronación un diámetro por debajo de la del trasdós |
+| Bastón trasdós / intradós (opcional) | barra recta que nace dentro de la zapata con un anclaje `embedMm` bajo su cara superior y se corta a `cutLengthMm` sobre la zapata; `stacked: true` (por defecto) la apila por dentro de la vertical de su cara, tangente o con `gapMm` de hueco y en su misma línea a lo largo del muro (los horizontales de esa altura se apoyan en el bastón); `stacked: false` la intercala media separación con las verticales en la misma línea de recubrimiento (a trazos en el esquema) |
+| Reparto horizontal alzado ×2 caras | por tramos de altura (1 a 3), barra a barra (exacto con el talud) o por bandas; el tramo inferior baja a la zapata hasta las patillas; en L con pata en la esquina |
 | Transversal inferior de zapata | capa exterior, con patas verticales hacia arriba en los extremos |
 | Transversal superior de zapata | ídem hacia abajo, con las patas por dentro de las de la inferior |
 | Reparto longitudinal de zapata ×2 capas | por dentro del transversal y de sus patas; una barra definida + array en el ancho |
@@ -250,12 +264,28 @@ tres posiciones:
   cada cara: 1300 y 1300.
 
 Cada refuerzo lleva `top` (capa), `barTypeName` y `spacingMm`. En la ventana se
-añaden y quitan con botones; el esquema los dibuja en azul oscuro. Si con la
-posición y el hueco elegidos el refuerzo queda a la altura de las longitudinales
-de su capa (las barras se solaparían), la ventana avisa e indica el hueco mínimo
-que lo evita, y al pulsar Armar pide confirmación. Si no cabe sin invadir el
-recubrimiento, se deja en el recubrimiento con aviso. En los esquineros siguen
-las mismas reglas de bloque de esquina que las transversales.
+añaden y quitan con botones; el esquema los dibuja en azul oscuro. En los
+esquineros siguen las mismas reglas de bloque de esquina que las transversales.
+
+**Regla única de apilado: todo se mueve.** Cada capa de la zapata se apila de
+fuera hacia dentro (`SectionBars.Layer`), eje a eje la suma de los radios más
+el hueco pedido:
+
+1. Un refuerzo **hacia fuera** (debajo de la transversal inferior, encima de la
+   superior) solo puede llegar hasta el recubrimiento, porque más allá no hay
+   hormigón: se queda ahí y la transversal se apila por dentro de él con el
+   hueco indicado.
+2. Un refuerzo **hacia dentro** no tiene límite: va sobre la transversal con su
+   hueco y, si cae sobre las longitudinales de su capa, éstas se apartan hacia
+   dentro para apoyarse en él.
+3. Las patillas de las verticales se apoyan sobre lo más interior de la capa
+   inferior, sea lo que sea (longitudinal, refuerzo o transversal).
+
+No hay avisos de cruce ni confirmación al armar: el esquema muestra dónde queda
+cada barra y la etiqueta de la transversal o las longitudinales dice cuánto se
+han apartado. En el ala no pasante de un esquinero con malla cruzada, la capa
+exterior (longitudinal propia + transversal del otro ala) hace de suelo: el
+refuerzo hacia fuera se apoya sobre ella y la transversal encima.
 
 La geometría en sección de estas familias está en `SectionBars`, que usan tanto
 el generador como el esquema de la ventana.
@@ -299,12 +329,18 @@ Requisitos previos en el modelo:
   a costa de un pequeño desvío respecto a la cara dentro de cada banda.
 - `legMm` en las verticales es lo que la patilla sobresale de la cara opuesta del
   alzado tras cruzar bajo la pantalla (los 900 del plano). En las transversales
-  es la longitud de las patas verticales de los extremos.
+  es la longitud de las patas verticales de los extremos. `crownLegMm` (0 por
+  defecto) es la patilla de coronación de las verticales, hacia la cara
+  contraria y acotada a la vertical opuesta; los horizontales del
+  tramo superior paran debajo de ella.
 - `stemDowelBack` / `stemDowelFront`: bastones de arranque (desactivados por
   defecto); `cutLengthMm` es su altura sobre la cara superior de zapata y
   `embedMm` su anclaje recto dentro de la zapata (se recorta al recubrimiento
-  inferior con aviso si no cabe). Un `cutLengthMm` > 0 en una vertical de un
-  `config.json` antiguo se convierte en un bastón activo con esos valores.
+  inferior con aviso si no cabe). `stacked` (`true` por defecto) los apila por
+  dentro de la vertical de su cara con `gapMm` de hueco; `false` los intercala
+  media separación con las verticales en su misma línea. Un `cutLengthMm` > 0
+  en una vertical de un `config.json` antiguo se convierte en un bastón activo
+  con esos valores.
 - `partitionTemplate`: plantilla del parámetro Partición de cada barra. Comodines
   `{marca}` (Marca del muro; si está vacía, su Id), `{id}`, `{tipo}`, `{familia}`,
   `{ala}` (ala 1 / ala 2 en esquineros) y `{conjunto}` (nombre del juego de
@@ -337,6 +373,11 @@ Requisitos previos en el modelo:
   divide `coverStemMm` por el coseno del ángulo.
 - No solapa ni escalona el armado vertical en altura: cada barra va de zapata a
   coronación de una pieza. Para muros altos habrá que añadir el escalonado.
+- Las barras perpendiculares que se cruzan en el mismo plano a lo largo del muro
+  (verticales con la transversal superior, bastón apilado con la patilla de su
+  vertical, horizontales de la zapata con las transversales) se modelan
+  cruzándose, como en un plano de sección; en obra se desplazan unos
+  centímetros a lo largo del muro.
 - No hace comprobaciones estructurales. Decide las cuantías y el detalle de
   esquina tú; esto solo modela lo que eliges en la ventana.
 
