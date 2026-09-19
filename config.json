@@ -1,0 +1,28 @@
+{
+  "coverStemMm": 50,
+  "coverStemTopMm": 50,
+  "coverFootingTopMm": 50,
+  "coverFootingBottomMm": 75,
+  "coverFootingSideMm": 50,
+  "coverEndMm": 50,
+
+  "stemHorizontalBandMm": 0,
+  "probeSliceMm": 10,
+
+  "stemVerticalBack":  { "enabled": true, "barTypeName": "7/8", "spacingMm": 200, "legMm": 900, "cutLengthMm": 0 },
+  "stemVerticalFront": { "enabled": true, "barTypeName": "7/8", "spacingMm": 200, "legMm": 900, "cutLengthMm": 0 },
+
+  "stemHorizontalBack":  { "enabled": true, "barTypeName": "1/2", "spacingMm": 200 },
+  "stemHorizontalFront": { "enabled": true, "barTypeName": "1/2", "spacingMm": 200 },
+
+  "footingTransverseBottom": { "enabled": true, "barTypeName": "7/8", "spacingMm": 200, "legMm": 300 },
+  "footingTransverseTop":    { "enabled": true, "barTypeName": "7/8", "spacingMm": 200, "legMm": 300 },
+
+  "footingLongitudinalBottom": { "enabled": true, "barTypeName": "1/2", "spacingMm": 200 },
+  "footingLongitudinalTop":    { "enabled": true, "barTypeName": "1/2", "spacingMm": 200 },
+
+  "sectionOverrides": {
+    "Muro de contencion perimetral": { "footingThicknessMm": 600, "flipAxis": false },
+    "Muro de contencion esquinero":  { "footingThicknessMm": 600, "flipAxis": false }
+  }
+}
