@@ -16,8 +16,10 @@ namespace RetainingWallRebar
         public double SpacingMm { get; set; } = 200;
         /// <summary>Longitud de la patilla o pata. Uso segun la familia.</summary>
         public double LegMm { get; set; } = 0;
-        /// <summary>Recorte de la barra (0 = hasta coronacion). Para los bastones.</summary>
+        /// <summary>Recorte de la barra (0 = hasta coronacion). En los bastones, su altura sobre la zapata.</summary>
         public double CutLengthMm { get; set; } = 0;
+        /// <summary>Solo bastones: longitud de anclaje recto dentro de la zapata, bajo su cara superior (mm).</summary>
+        public double EmbedMm { get; set; } = 500;
     }
 
     public class SectionOverride
@@ -60,8 +62,9 @@ namespace RetainingWallRebar
     }
 
     /// <summary>
-    /// Refuerzo transversal corto de zapata (barra recta en la capa de su transversal,
-    /// intercalada media separacion con ella). Posicion:
+    /// Refuerzo transversal corto de zapata: barra recta apilada sobre su transversal
+    /// (encima o debajo, con un hueco opcional) y alineada con ella a lo largo del muro.
+    /// Posicion en el ancho:
     ///  "toe"    = puntera: desde el borde de la zapata hacia dentro, LengthMm.
     ///  "heel"   = talon: idem desde el borde del talon.
     ///  "center" = centrado en la pantalla: ToeLengthMm hacia la puntera y HeelLengthMm
@@ -70,6 +73,10 @@ namespace RetainingWallRebar
     public class FootingReinfCfg
     {
         public bool Top { get; set; } = true;
+        /// <summary>true = apilado encima de su transversal, false = debajo (hacia arriba / hacia abajo en la seccion).</summary>
+        public bool Above { get; set; } = false;
+        /// <summary>Hueco entre el refuerzo y su transversal (mm). 0 = tocandola, como lapices apilados.</summary>
+        public double GapMm { get; set; } = 0;
         public string Position { get; set; } = "center";
         public string BarTypeName { get; set; } = "";
         public double SpacingMm { get; set; } = 200;

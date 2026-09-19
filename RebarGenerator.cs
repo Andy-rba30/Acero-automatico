@@ -134,7 +134,7 @@ namespace RetainingWallRebar
             if (wb < wa) { c.Result.Failed.Add(name + ": no cabe en el tramo"); return; }
 
             RebarBarType bt = FindBarType(c.Doc, f.BarTypeName);
-            SectionBars.Poly p = SectionBars.Vertical(s, cfg, back, Dia(c), dowel);
+            SectionBars.Poly p = dowel ? SectionBars.Dowel(s, cfg, back, Dia(c), out _) : SectionBars.Vertical(s, cfg, back, Dia(c));
             if (p == null) { c.Result.Failed.Add(name + ": altura no valida"); return; }
 
             // La barra de definicion va en w = inicio del tramo (recubrimiento de extremo) y
@@ -170,8 +170,8 @@ namespace RetainingWallRebar
         }
 
         // =================================================================
-        // Refuerzos transversales cortos de zapata: barra recta en la capa de su
-        // transversal, intercalada media separacion con ella a lo largo del muro
+        // Refuerzos transversales cortos de zapata: barra recta apilada sobre su
+        // transversal (encima o debajo) y alineada con ella a lo largo del muro
         // =================================================================
         private static void FootingReinforcements(Ctx c)
         {
@@ -188,18 +188,13 @@ namespace RetainingWallRebar
 
                 RebarBarType bt = FindBarType(c.Doc, r.BarTypeName);
                 double otherDb = r.Top ? c.Plan.OtherTransverseTopDb : c.Plan.OtherTransverseBottomDb;
-                SectionBars.Poly p = SectionBars.Reinforcement(s, cfg, r, Dia(c), out string warn, c.Plan.SwapFootingLayers, otherDb);
+                SectionBars.Poly p = SectionBars.Reinforcement(s, cfg, r, Dia(c), out string warn, out _, c.Plan.SwapFootingLayers, otherDb);
                 if (p == null) { c.Result.Failed.Add(name + ": " + warn); continue; }
 
-                // intercalado media separacion con la transversal de su capa
-                BarFamilyCfg tr = r.Top ? cfg.FootingTransverseTop : cfg.FootingTransverseBottom;
-                double shift = Mm(tr.Enabled ? tr.SpacingMm : r.SpacingMm) * 0.5;
-                double wa = wa0 + shift;
-                if (wb - wa < -MinSeg) { c.Result.Failed.Add(name + ": no cabe en el tramo"); continue; }
-
-                List<Curve> curves = Curves(s, p, wa);
+                // alineado con la transversal de su capa (apilado sobre ella)
+                List<Curve> curves = Curves(s, p, wa0);
                 if (curves.Count == 0) { c.Result.Failed.Add(name + ": geometria degenerada"); continue; }
-                Place(c, name, bt, s.DirW, curves, Mm(r.SpacingMm), Math.Max(0, wb - wa), Layout.ArrayIfLonger, true);
+                Place(c, name, bt, s.DirW, curves, Mm(r.SpacingMm), wb - wa0, Layout.ArrayIfLonger, true);
             }
         }
 

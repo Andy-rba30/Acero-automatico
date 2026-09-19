@@ -11,7 +11,8 @@ namespace RetainingWallRebar
     /// se crea. Todo en pies, coordenadas locales del muro.
     ///
     /// Capas en la zapata, de fuera hacia dentro (igual arriba que abajo):
-    ///   transversal -> longitudinal -> patillas de las verticales.
+    ///   transversal -> longitudinal -> patillas de las verticales. Los refuerzos se apilan
+    ///   sobre su transversal (encima o debajo, con hueco opcional) donde diga el usuario.
     /// Las patas de la transversal superior van por dentro de las de la inferior, y las
     /// longitudinales por dentro de las patas de su transversal, para que nada se cruce
     /// en la misma linea. Las patillas de las verticales cruzan bajo la pantalla hacia el
@@ -107,18 +108,48 @@ namespace RetainingWallRebar
         }
 
         /// <summary>
-        /// Refuerzo transversal corto de zapata: barra recta en la capa de su transversal.
-        /// Puntera / talon: desde el borde de la zapata hacia dentro. Centro: desde el eje
-        /// de la pantalla en su base, hacia cada lado. Se acota al ancho util de la zapata.
+        /// Refuerzo transversal corto de zapata: barra recta apilada sobre su transversal
+        /// (encima o debajo, tangente con GapMm = 0, como lapices apilados) y alineada con
+        /// ella a lo largo del muro. Puntera / talon: desde el borde de la zapata hacia
+        /// dentro. Centro: desde el eje de la pantalla en su base, hacia cada lado. Se acota
+        /// al ancho util de la zapata y al recubrimiento. crosses = true si se solapa con las
+        /// longitudinales de su capa (la ventana avisa y pide confirmacion).
         /// </summary>
         public static Poly Reinforcement(WallSection s, AppConfig cfg, FootingReinfCfg r, Func<string, double> dia,
-                                         out string warning, bool swap = false, double otherTransDb = 0)
+                                         out string warning, out bool crosses, bool swap = false, double otherTransDb = 0)
         {
             warning = null;
+            crosses = false;
             double db = dia(r.BarTypeName);
             double dbT = DbT(cfg, r.Top, dia);
-            if (dbT <= 0) dbT = db;   // sin transversal en esa capa, el refuerzo ocupa su sitio
-            FootingLevels(s, cfg, r.Top, dbT, DbL(cfg, r.Top, dia), swap, otherTransDb, out double v, out _);
+            double dbL = DbL(cfg, r.Top, dia);
+            FootingLevels(s, cfg, r.Top, dbT, dbL, swap, otherTransDb, out double vT, out double vL);
+
+            // apilado sobre la transversal: eje a eje = suma de radios + hueco
+            double dir = r.Above ? +1 : -1;
+            double gap = Math.Max(0, Mm(r.GapMm));
+            double v = vT + dir * (dbT * 0.5 + gap + db * 0.5);
+            double vMin = Mm(cfg.CoverFootingBottomMm) + db * 0.5;
+            double vMax = s.FootingTop - Mm(cfg.CoverFootingTopMm) - db * 0.5;
+            if (v < vMin - 0.003 || v > vMax + 0.003)
+            {
+                v = Math.Min(Math.Max(v, vMin), vMax);
+                warning = "refuerzo " + r.Describe + ": no cabe " + (r.Above ? "encima" : "debajo") +
+                          " de la transversal sin invadir el recubrimiento; se deja en el recubrimiento";
+            }
+
+            // cruce con las longitudinales de su capa (superficies solapadas)
+            if (dbL > 0 && Math.Abs(v - vL) < (db + dbL) * 0.5 - 0.0005)
+            {
+                crosses = true;
+                double vClear = vL + dir * (db + dbL) * 0.5;
+                double gapMin = dir * (vClear - vT) - dbT * 0.5 - db * 0.5;
+                string fix = gapMin >= 0 && (dir > 0 ? vClear <= vMax : vClear >= vMin)
+                    ? "; con un hueco de " + WallSection.ToMm(gapMin) + " mm dejaria de cruzarlas"
+                    : "; prueba a ponerlo al otro lado de la transversal";
+                warning = (warning != null ? warning + ". " : "") + "refuerzo " + r.Describe +
+                          ": CRUZA las longitudinales de su capa a la misma altura" + fix;
+            }
 
             double lim0 = Mm(cfg.CoverFootingSideMm) + db * 0.5, lim1 = s.LenU - lim0;
             double ua, ub;
@@ -132,7 +163,8 @@ namespace RetainingWallRebar
                 ua = heelAtU0 ? axis - heel : axis - toe;
                 ub = heelAtU0 ? axis + toe : axis + heel;
                 if (toe < half || heel < half)
-                    warning = "refuerzo " + r.Describe + ": una longitud es menor que medio espesor de la pantalla (" +
+                    warning = (warning != null ? warning + ". " : "") + "refuerzo " + r.Describe +
+                              ": una longitud es menor que medio espesor de la pantalla (" +
                               WallSection.ToMm(half) + " mm) y la barra no asoma por esa cara";
             }
             else
@@ -145,7 +177,7 @@ namespace RetainingWallRebar
             double a = Math.Max(ua, lim0), b = Math.Min(ub, lim1);
             if (b - a < Mm(50)) { warning = "refuerzo " + r.Describe + ": longitud no valida"; return null; }
             if (a > ua + 0.003 || b < ub - 0.003)
-                warning = warning ?? "refuerzo " + r.Describe + ": se acorta al ancho util de la zapata";
+                warning = (warning != null ? warning + ". " : "") + "refuerzo " + r.Describe + ": se acorta al ancho util de la zapata";
 
             var p = new Poly { Db = db };
             p.Pts.Add((a, v));
@@ -155,30 +187,23 @@ namespace RetainingWallRebar
 
         /// <summary>
         /// Cota del eje de la patilla de una vertical: apoyada sobre transversal + longitudinal
-        /// inferiores y apilada por encima de las patillas que van debajo, en este orden:
-        /// vertical trasdos, vertical intrados, baston trasdos, baston intrados.
+        /// inferiores; la del intrados apilada sobre la del trasdos.
         /// </summary>
-        private static double HookLevel(AppConfig cfg, bool back, bool dowel, double db, Func<string, double> dia)
+        private static double HookLevel(AppConfig cfg, bool back, double db, Func<string, double> dia)
         {
             double v = Mm(cfg.CoverFootingBottomMm) + DbT(cfg, false, dia) + DbL(cfg, false, dia);
-            var below = new List<BarFamilyCfg>();
-            if (dowel) { below.Add(cfg.StemVerticalBack); below.Add(cfg.StemVerticalFront); if (!back) below.Add(cfg.StemDowelBack); }
-            else if (!back) below.Add(cfg.StemVerticalBack);
-            foreach (BarFamilyCfg f in below)
-                if (f.Enabled) v += dia(f.BarTypeName);
+            if (!back && cfg.StemVerticalBack.Enabled) v += dia(cfg.StemVerticalBack.BarTypeName);
             return v + db * 0.5;
         }
 
         /// <summary>
-        /// Vertical del alzado de una cara (o baston de arranque, dowel = true): baja
-        /// siguiendo la cara, se apoya sobre la parrilla inferior y su patilla cruza bajo la
-        /// pantalla hasta sobresalir LegMm de la cara opuesta. El baston se corta a
-        /// CutLengthMm sobre la zapata. null si esta desactivada.
+        /// Vertical del alzado de una cara: baja siguiendo la cara, se apoya sobre la
+        /// parrilla inferior y su patilla cruza bajo la pantalla hasta sobresalir LegMm de
+        /// la cara opuesta. null si esta desactivada.
         /// </summary>
-        public static Poly Vertical(WallSection s, AppConfig cfg, bool back, Func<string, double> dia, bool dowel = false)
+        public static Poly Vertical(WallSection s, AppConfig cfg, bool back, Func<string, double> dia)
         {
-            BarFamilyCfg f = dowel ? (back ? cfg.StemDowelBack : cfg.StemDowelFront)
-                                   : (back ? cfg.StemVerticalBack : cfg.StemVerticalFront);
+            BarFamilyCfg f = back ? cfg.StemVerticalBack : cfg.StemVerticalFront;
             if (!f.Enabled) return null;
             double db = dia(f.BarTypeName);
             double cov = Mm(cfg.CoverStemMm);
@@ -188,10 +213,8 @@ namespace RetainingWallRebar
             double uAt(double v) => (useU0 ? s.FaceU0(v) : s.FaceU1(v)) + sign * (cov + db * 0.5);
 
             double vTop = s.LenV - Mm(cfg.CoverStemTopMm) - db * 0.5;
-            if (dowel) vTop = Math.Min(vTop, s.FootingTop + Mm(f.CutLengthMm));
-            else if (f.CutLengthMm > 0) vTop = Math.Min(vTop, s.FootingTop + Mm(f.CutLengthMm));
-
-            double vBot = HookLevel(cfg, back, dowel, db, dia);
+            if (f.CutLengthMm > 0) vTop = Math.Min(vTop, s.FootingTop + Mm(f.CutLengthMm));
+            double vBot = HookLevel(cfg, back, db, dia);
             if (vTop <= vBot + 0.003) return null;
 
             // cruza hacia el lado contrario y sobresale LegMm de la cara opuesta del alzado
@@ -204,6 +227,45 @@ namespace RetainingWallRebar
             p.Pts.Add((uAt(vTop), vTop));
             p.Pts.Add((uAt(vBot), vBot));
             if (Math.Abs(uEnd - uAt(vBot)) > 0.003) p.Pts.Add((uEnd, vBot));
+            return p;
+        }
+
+        /// <summary>
+        /// Baston de arranque de una cara: barra recta que nace dentro de la zapata con una
+        /// longitud de anclaje EmbedMm bajo su cara superior, sigue la cara de la pantalla y
+        /// se corta a CutLengthMm sobre la zapata. Sin patilla. El anclaje se recorta al
+        /// recubrimiento inferior si no cabe (con aviso). null si esta desactivado.
+        /// </summary>
+        public static Poly Dowel(WallSection s, AppConfig cfg, bool back, Func<string, double> dia, out string warning)
+        {
+            warning = null;
+            BarFamilyCfg f = back ? cfg.StemDowelBack : cfg.StemDowelFront;
+            if (!f.Enabled) return null;
+            double db = dia(f.BarTypeName);
+            double cov = Mm(cfg.CoverStemMm);
+
+            bool useU0 = back ? s.HeelAtU0 : !s.HeelAtU0;
+            double sign = useU0 ? +1 : -1;
+            double uAt(double v) => (useU0 ? s.FaceU0(v) : s.FaceU1(v)) + sign * (cov + db * 0.5);
+
+            double vTop = Math.Min(s.LenV - Mm(cfg.CoverStemTopMm) - db * 0.5, s.FootingTop + Mm(f.CutLengthMm));
+            double vBot = s.FootingTop - Mm(f.EmbedMm);
+            double vMin = Mm(cfg.CoverFootingBottomMm) + db * 0.5;
+            if (vBot < vMin - 0.003)
+            {
+                vBot = vMin;
+                warning = "baston " + (back ? "trasdos" : "intrados") + ": el anclaje de " + f.EmbedMm.ToString("0") +
+                          " mm no cabe en la zapata; se recorta a " + WallSection.ToMm(s.FootingTop - vBot) + " mm";
+            }
+            if (vTop <= vBot + 0.003)
+            {
+                warning = "baston " + (back ? "trasdos" : "intrados") + ": altura no valida";
+                return null;
+            }
+
+            var p = new Poly { Db = db };
+            p.Pts.Add((uAt(vTop), vTop));
+            p.Pts.Add((uAt(vBot), vBot));
             return p;
         }
     }

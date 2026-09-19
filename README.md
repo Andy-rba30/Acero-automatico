@@ -138,8 +138,11 @@ Al lanzar el comando con uno o varios muros seleccionados se abre una ventana:
    cursor, arrastrar para desplazar, doble clic para volver a encajar. Al pasar
    el ratón por una fila de tramos o una entrada de la leyenda se resalta ese
    elemento. Las etiquetas de los tramos van en una columna a la derecha con
-   una línea de referencia a su banda. Las casillas con valores no válidos se
-   marcan en rojo al escribir. Se redibuja con cada cambio; al pasar el ratón por una fila
+   una línea de referencia a su banda. Al hacer clic sobre una barra se resalta
+   su familia y aparece junto a ella una etiqueta con sus datos (familia, cara,
+   tipo, separación, tramo y cota en los horizontales); clic en el hormigón
+   quita la selección. Las casillas con valores no válidos se marcan en rojo al
+   escribir. Se redibuja con cada cambio; al pasar el ratón por una fila
    se resalta su tramo, y cada punto muestra su tramo, tipo y cota. Debajo de
    la tabla aparecen los avisos (tramo sin barras, cota fuera de la altura,
    cotas no crecientes).
@@ -227,15 +230,17 @@ posición en coordenadas locales del muro (del ala, en un esquinero).
 |---|---|
 | Vertical trasdós | sigue la cara inclinada, se apoya sobre la parrilla inferior y su patilla cruza bajo la pantalla hasta sobresalir `legMm` de la cara opuesta |
 | Vertical intradós | ídem en sentido contrario, con la patilla apilada un diámetro sobre la del trasdós |
-| Bastón trasdós / intradós (opcional) | vertical corta cortada a `cutLengthMm` sobre la zapata, intercalada media separación con las verticales enteras de su cara, con la misma patilla cruzada (apilada sobre las anteriores) |
+| Bastón trasdós / intradós (opcional) | barra recta que nace dentro de la zapata con un anclaje `embedMm` bajo su cara superior, sigue la cara y se corta a `cutLengthMm` sobre la zapata; intercalada media separación con las verticales enteras de su cara |
 | Reparto horizontal alzado ×2 caras | por tramos de altura (1 a 3), barra a barra (exacto con el talud) o por bandas; en L con pata en la esquina |
 | Transversal inferior de zapata | capa exterior, con patas verticales hacia arriba en los extremos |
 | Transversal superior de zapata | ídem hacia abajo, con las patas por dentro de las de la inferior |
 | Reparto longitudinal de zapata ×2 capas | por dentro del transversal y de sus patas; una barra definida + array en el ancho |
 
 Además, una lista opcional de **refuerzos transversales cortos de zapata**
-(`footingReinforcements`): barras rectas en la capa de la transversal superior o
-inferior, intercaladas media separación con ella, en tres posiciones:
+(`footingReinforcements`): barras rectas apiladas sobre la transversal superior o
+inferior (`above`: encima o debajo; `gapMm`: hueco entre ambas, 0 = tangentes,
+eje a eje la suma de los radios) y alineadas con ella a lo largo del muro, en
+tres posiciones:
 
 - `"toe"` (puntera) y `"heel"` (talón): `lengthMm` medido desde el borde de la
   zapata hacia dentro (con el recubrimiento lateral); si es mayor que el vuelo,
@@ -245,8 +250,12 @@ inferior, intercaladas media separación con ella, en tres posiciones:
   cada cara: 1300 y 1300.
 
 Cada refuerzo lleva `top` (capa), `barTypeName` y `spacingMm`. En la ventana se
-añaden y quitan con botones; el esquema los dibuja en azul oscuro. En los
-esquineros siguen las mismas reglas de bloque de esquina que las transversales.
+añaden y quitan con botones; el esquema los dibuja en azul oscuro. Si con la
+posición y el hueco elegidos el refuerzo queda a la altura de las longitudinales
+de su capa (las barras se solaparían), la ventana avisa e indica el hueco mínimo
+que lo evita, y al pulsar Armar pide confirmación. Si no cabe sin invadir el
+recubrimiento, se deja en el recubrimiento con aviso. En los esquineros siguen
+las mismas reglas de bloque de esquina que las transversales.
 
 La geometría en sección de estas familias está en `SectionBars`, que usan tanto
 el generador como el esquema de la ventana.
@@ -292,9 +301,10 @@ Requisitos previos en el modelo:
   alzado tras cruzar bajo la pantalla (los 900 del plano). En las transversales
   es la longitud de las patas verticales de los extremos.
 - `stemDowelBack` / `stemDowelFront`: bastones de arranque (desactivados por
-  defecto); `cutLengthMm` es su altura sobre la cara superior de zapata. Un
-  `cutLengthMm` > 0 en una vertical de un `config.json` antiguo se convierte en
-  un bastón activo con esos valores.
+  defecto); `cutLengthMm` es su altura sobre la cara superior de zapata y
+  `embedMm` su anclaje recto dentro de la zapata (se recorta al recubrimiento
+  inferior con aviso si no cabe). Un `cutLengthMm` > 0 en una vertical de un
+  `config.json` antiguo se convierte en un bastón activo con esos valores.
 - `partitionTemplate`: plantilla del parámetro Partición de cada barra. Comodines
   `{marca}` (Marca del muro; si está vacía, su Id), `{id}`, `{tipo}`, `{familia}`,
   `{ala}` (ala 1 / ala 2 en esquineros) y `{conjunto}` (nombre del juego de
