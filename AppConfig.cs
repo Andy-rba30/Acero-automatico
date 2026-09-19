@@ -102,6 +102,12 @@ namespace RetainingWallRebar
         // --- familias de barras ---
         public BarFamilyCfg StemVerticalBack { get; set; } = new BarFamilyCfg();
         public BarFamilyCfg StemVerticalFront { get; set; } = new BarFamilyCfg();
+        /// <summary>
+        /// Bastones de arranque (verticales cortas intercaladas con las enteras). CutLengthMm
+        /// es su altura sobre la cara superior de la zapata. Desactivados por defecto.
+        /// </summary>
+        public BarFamilyCfg StemDowelBack { get; set; } = new BarFamilyCfg { Enabled = false, CutLengthMm = 2000 };
+        public BarFamilyCfg StemDowelFront { get; set; } = new BarFamilyCfg { Enabled = false, CutLengthMm = 2000 };
         public BarFamilyCfg FootingTransverseTop { get; set; } = new BarFamilyCfg();
         public BarFamilyCfg FootingTransverseBottom { get; set; } = new BarFamilyCfg();
         public BarFamilyCfg FootingLongitudinalTop { get; set; } = new BarFamilyCfg();
@@ -121,6 +127,14 @@ namespace RetainingWallRebar
 
         /// <summary>Tramos de abajo arriba (1 a 3). Cada uno con su tipo de barra y separacion por cara.</summary>
         public List<StemZoneCfg> StemHorizontalZones { get; set; } = new List<StemZoneCfg>();
+
+        /// <summary>
+        /// Plantilla del parametro Particion de cada barra. Comodines: {marca} (Marca del
+        /// elemento; si esta vacia se usa el Id), {id}, {tipo} (nombre del tipo), {familia},
+        /// {ala} ("ala 1" / "ala 2" en esquineros, vacio en muros rectos) y {conjunto}
+        /// (nombre del juego de barras). Los comodines vacios se eliminan con sus separadores.
+        /// </summary>
+        public string PartitionTemplate { get; set; } = "MC-{marca}";
 
         /// <summary>Refuerzos transversales cortos de zapata (lista, puede estar vacia).</summary>
         public List<FootingReinfCfg> FootingReinforcements { get; set; } = new List<FootingReinfCfg>();
@@ -204,6 +218,17 @@ namespace RetainingWallRebar
             }
         }
 
+        private static void MigrateDowel(BarFamilyCfg vertical, BarFamilyCfg dowel)
+        {
+            if (vertical == null || vertical.CutLengthMm <= 0) return;
+            dowel.Enabled = vertical.Enabled;
+            dowel.BarTypeName = vertical.BarTypeName;
+            dowel.SpacingMm = vertical.SpacingMm;
+            dowel.LegMm = vertical.LegMm;
+            dowel.CutLengthMm = vertical.CutLengthMm;
+            vertical.CutLengthMm = 0;
+        }
+
         [JsonIgnore]
         public bool StemZoneModeManual =>
             string.Equals((StemZoneMode ?? "").Trim(), "manual", StringComparison.OrdinalIgnoreCase);
@@ -250,6 +275,13 @@ namespace RetainingWallRebar
             StemHorizontalFront = null;
             if (FootingReinforcements == null) FootingReinforcements = new List<FootingReinfCfg>();
             FootingReinforcements.RemoveAll(r => r == null);
+            if (StemDowelBack == null) StemDowelBack = new BarFamilyCfg { Enabled = false, CutLengthMm = 2000 };
+            if (StemDowelFront == null) StemDowelFront = new BarFamilyCfg { Enabled = false, CutLengthMm = 2000 };
+            // antes, "baston" en una vertical cortaba todas las verticales de esa cara: ahora es
+            // una familia propia intercalada con las enteras
+            MigrateDowel(StemVerticalBack, StemDowelBack);
+            MigrateDowel(StemVerticalFront, StemDowelFront);
+            if (string.IsNullOrWhiteSpace(PartitionTemplate)) PartitionTemplate = "MC-{marca}";
             if (!StemZoneModeManual) StemZoneMode = "auto";
         }
 

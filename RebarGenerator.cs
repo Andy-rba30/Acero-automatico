@@ -51,7 +51,8 @@ namespace RetainingWallRebar
             public WallSection S;
             public WingPlan Plan;
             public AppConfig Cfg;
-            public string Partition;
+            /// <summary>Particion de un conjunto a partir de su nombre (plantilla de la configuracion).</summary>
+            public Func<string, string> Partition;
             public BuildResult Result;
 
             /// <summary>Tras el primer rechazo solo se comprueba, no se crea: el elemento se va a deshacer entero.</summary>
@@ -59,23 +60,26 @@ namespace RetainingWallRebar
         }
 
         /// <summary>Arma un tramo recto completo.</summary>
-        public static BuildResult Build(Document doc, Element host, WallSection s, AppConfig cfg)
+        public static BuildResult Build(Document doc, HostAnalysis item, AppConfig cfg)
         {
-            return Build(doc, host, s, WingPlan.Straight(s, cfg), cfg, new BuildResult());
+            WallSection s = item.Straight;
+            return Build(doc, item, s, WingPlan.Straight(s, cfg), cfg, new BuildResult());
         }
 
         /// <summary>Arma un tramo (recto o ala de un esquinero) segun su plan, acumulando en result.</summary>
-        public static BuildResult Build(Document doc, Element host, WallSection s, WingPlan plan, AppConfig cfg, BuildResult result)
+        public static BuildResult Build(Document doc, HostAnalysis item, WallSection s, WingPlan plan, AppConfig cfg, BuildResult result)
         {
             var c = new Ctx
             {
-                Doc = doc, Host = host, S = s, Plan = plan, Cfg = cfg,
-                Partition = PartitionName(doc, host),
+                Doc = doc, Host = item.Host, S = s, Plan = plan, Cfg = cfg,
+                Partition = setName => item.Partition(cfg, s.Label, setName),
                 Result = result
             };
 
             StemVerticals(c, back: true);
             StemVerticals(c, back: false);
+            StemVerticals(c, back: true, dowel: true);
+            StemVerticals(c, back: false, dowel: true);
             FootingTransverse(c, top: false);
             FootingTransverse(c, top: true);
             FootingReinforcements(c);
@@ -87,12 +91,13 @@ namespace RetainingWallRebar
         }
 
         /// <summary>Arma las dos alas de un muro esquinero en L con sus reglas de esquina.</summary>
-        public static BuildResult BuildCorner(Document doc, Element host, CornerWall cw, AppConfig cfg)
+        public static BuildResult BuildCorner(Document doc, HostAnalysis item, AppConfig cfg)
         {
+            CornerWall cw = item.Corner;
             WingPlan[] plans = cw.BuildPlans(doc, cfg);
             var result = new BuildResult();
             for (int k = 0; k < 2; k++)
-                Build(doc, host, cw.Wings[k], plans[k], cfg, result);
+                Build(doc, item, cw.Wings[k], plans[k], cfg, result);
             return result;
         }
 
@@ -110,19 +115,27 @@ namespace RetainingWallRebar
         // Verticales del alzado: tramo inclinado siguiendo la cara + patilla que cruza
         // bajo la pantalla (geometria en SectionBars.Vertical, compartida con el esquema)
         // =================================================================
-        private static void StemVerticals(Ctx c, bool back)
+        private static void StemVerticals(Ctx c, bool back, bool dowel = false)
         {
             WallSection s = c.S;
             AppConfig cfg = c.Cfg;
-            BarFamilyCfg f = back ? cfg.StemVerticalBack : cfg.StemVerticalFront;
+            BarFamilyCfg f = dowel ? (back ? cfg.StemDowelBack : cfg.StemDowelFront)
+                                   : (back ? cfg.StemVerticalBack : cfg.StemVerticalFront);
             if (!f.Enabled) return;
-            string name = c.Plan.Label + "vertical " + (back ? "trasdos" : "intrados");
+            string name = c.Plan.Label + (dowel ? "baston " : "vertical ") + (back ? "trasdos" : "intrados");
 
             double wa = c.Plan.VertW0, wb = c.Plan.VertW1;
+            if (dowel)
+            {
+                // intercalado media separacion con las verticales enteras de su cara
+                BarFamilyCfg main = back ? cfg.StemVerticalBack : cfg.StemVerticalFront;
+                wa += Mm(main.Enabled ? main.SpacingMm : f.SpacingMm) * 0.5;
+            }
             if (wb < wa) { c.Result.Failed.Add(name + ": no cabe en el tramo"); return; }
 
             RebarBarType bt = FindBarType(c.Doc, f.BarTypeName);
-            SectionBars.Poly p = SectionBars.Vertical(s, cfg, back, Dia(c));
+            SectionBars.Poly p = SectionBars.Vertical(s, cfg, back, Dia(c), dowel);
+            if (p == null) { c.Result.Failed.Add(name + ": altura no valida"); return; }
 
             // La barra de definicion va en w = inicio del tramo (recubrimiento de extremo) y
             // el array avanza desde ahi hasta el final que marca el plan.
@@ -345,7 +358,7 @@ namespace RetainingWallRebar
             else
                 rb.GetShapeDrivenAccessor().SetLayoutAsSingle();
 
-            Finish(c.Doc, rb, c.Partition);
+            Finish(c.Doc, rb, c.Partition(SetName(c, name)));
             c.Result.Created.Add(new CreatedSet { Id = rb.Id, Name = name, Radius = r });
         }
 
@@ -444,6 +457,15 @@ namespace RetainingWallRebar
         // =================================================================
         // Utilidades
         // =================================================================
+
+        /// <summary>Nombre del juego de barras para {conjunto}: sin la etiqueta del ala ni la cota de cada barra.</summary>
+        private static string SetName(Ctx c, string name)
+        {
+            string n = name;
+            if (!string.IsNullOrEmpty(c.Plan.Label) && n.StartsWith(c.Plan.Label)) n = n.Substring(c.Plan.Label.Length);
+            n = System.Text.RegularExpressions.Regex.Replace(n, @"\s+(banda\s+)?v=.*$", "");
+            return n.Trim();
+        }
         private static void AddLine(List<Curve> list, XYZ a, XYZ b)
         {
             if (a.DistanceTo(b) > MinSeg) list.Add(Line.CreateBound(a, b));
@@ -517,13 +539,6 @@ namespace RetainingWallRebar
                 .OfClass(typeof(RebarBarType)).Cast<RebarBarType>()
                 .OrderBy(b => b.Name, StringComparer.OrdinalIgnoreCase)
                 .ToList();
-        }
-
-        private static string PartitionName(Document doc, Element host)
-        {
-            Parameter mark = host.get_Parameter(BuiltInParameter.ALL_MODEL_MARK);
-            string m = mark?.AsString();
-            return string.IsNullOrWhiteSpace(m) ? "MURO " + host.Id.ToString() : m;
         }
     }
 }

@@ -132,10 +132,14 @@ Al lanzar el comando con uno o varios muros seleccionados se abre una ventana:
    barra y separación por cara, y número de barras por cara. A la derecha, el
    **esquema** de la sección real del muro marcado: hormigón, una banda de color
    por tramo, las cotas de los límites y cada barra horizontal como un punto a
-   su altura y con su diámetro. En gris, el resto del armado tal y como se
-   creará: las verticales con su patilla (y su bastón si lo hay), las
-   transversales de zapata con sus patas y las longitudinales de zapata como
-   puntos. Se redibuja con cada cambio; al pasar el ratón por una fila
+   su altura y con su diámetro, más el resto del armado tal y como se creará,
+   cada tipo con su color (verticales, bastones, transversales, longitudinales
+   y refuerzos; leyenda debajo). Rueda del ratón para hacer zoom sobre el
+   cursor, arrastrar para desplazar, doble clic para volver a encajar. Al pasar
+   el ratón por una fila de tramos o una entrada de la leyenda se resalta ese
+   elemento. Las etiquetas de los tramos van en una columna a la derecha con
+   una línea de referencia a su banda. Las casillas con valores no válidos se
+   marcan en rojo al escribir. Se redibuja con cada cambio; al pasar el ratón por una fila
    se resalta su tramo, y cada punto muestra su tramo, tipo y cota. Debajo de
    la tabla aparecen los avisos (tramo sin barras, cota fuera de la altura,
    cotas no crecientes).
@@ -223,6 +227,7 @@ posición en coordenadas locales del muro (del ala, en un esquinero).
 |---|---|
 | Vertical trasdós | sigue la cara inclinada, se apoya sobre la parrilla inferior y su patilla cruza bajo la pantalla hasta sobresalir `legMm` de la cara opuesta |
 | Vertical intradós | ídem en sentido contrario, con la patilla apilada un diámetro sobre la del trasdós |
+| Bastón trasdós / intradós (opcional) | vertical corta cortada a `cutLengthMm` sobre la zapata, intercalada media separación con las verticales enteras de su cara, con la misma patilla cruzada (apilada sobre las anteriores) |
 | Reparto horizontal alzado ×2 caras | por tramos de altura (1 a 3), barra a barra (exacto con el talud) o por bandas; en L con pata en la esquina |
 | Transversal inferior de zapata | capa exterior, con patas verticales hacia arriba en los extremos |
 | Transversal superior de zapata | ídem hacia abajo, con las patas por dentro de las de la inferior |
@@ -286,8 +291,15 @@ Requisitos previos en el modelo:
 - `legMm` en las verticales es lo que la patilla sobresale de la cara opuesta del
   alzado tras cruzar bajo la pantalla (los 900 del plano). En las transversales
   es la longitud de las patas verticales de los extremos.
-- `cutLengthMm` > 0 convierte esa familia en bastón cortado a esa altura sobre
-  la cara superior de zapata.
+- `stemDowelBack` / `stemDowelFront`: bastones de arranque (desactivados por
+  defecto); `cutLengthMm` es su altura sobre la cara superior de zapata. Un
+  `cutLengthMm` > 0 en una vertical de un `config.json` antiguo se convierte en
+  un bastón activo con esos valores.
+- `partitionTemplate`: plantilla del parámetro Partición de cada barra. Comodines
+  `{marca}` (Marca del muro; si está vacía, su Id), `{id}`, `{tipo}`, `{familia}`,
+  `{ala}` (ala 1 / ala 2 en esquineros) y `{conjunto}` (nombre del juego de
+  barras). Los comodines vacíos se eliminan con su separador. Por defecto
+  `MC-{marca}`.
 - `cornerThroughWing`: `"auto"` (ala de tramo recto más largo), `"1"` o `"2"`.
 - `cornerLapDiameters` (40) y `cornerLapMinMm` (300): pata de solape de los
   horizontales en la esquina.

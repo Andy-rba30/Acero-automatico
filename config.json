@@ -16,8 +16,12 @@
   "cornerLapMinMm": 300,
   "cornerFootingMesh": "through",
 
-  "stemVerticalBack":  { "enabled": true, "barTypeName": "7/8", "spacingMm": 200, "legMm": 900, "cutLengthMm": 0 },
-  "stemVerticalFront": { "enabled": true, "barTypeName": "7/8", "spacingMm": 200, "legMm": 900, "cutLengthMm": 0 },
+  "partitionTemplate": "MC-{marca}",
+
+  "stemVerticalBack":  { "enabled": true, "barTypeName": "7/8", "spacingMm": 200, "legMm": 900 },
+  "stemVerticalFront": { "enabled": true, "barTypeName": "7/8", "spacingMm": 200, "legMm": 900 },
+  "stemDowelBack":     { "enabled": false, "barTypeName": "7/8", "spacingMm": 200, "legMm": 900, "cutLengthMm": 2000 },
+  "stemDowelFront":    { "enabled": false, "barTypeName": "7/8", "spacingMm": 200, "legMm": 900, "cutLengthMm": 2000 },
 
   "stemHorizontalBackEnabled": true,
   "stemHorizontalFrontEnabled": true,

@@ -14,6 +14,9 @@ namespace RetainingWallRebar
         public Element Host;
         public string Tag;
 
+        /// <summary>Datos del elemento para la plantilla de Particion.</summary>
+        public string Mark = "", TypeName = "", FamilyName = "";
+
         /// <summary>Seccion si el elemento es un tramo recto.</summary>
         public WallSection Straight;
 
@@ -35,11 +38,25 @@ namespace RetainingWallRebar
             return Corner.Describe(cfg);
         }
 
+        /// <summary>Particion de un juego de barras de este elemento segun la plantilla de la configuracion.</summary>
+        public string Partition(AppConfig cfg, string wing, string setName)
+        {
+            return PartitionName.Expand(cfg.PartitionTemplate, new PartitionName.Source
+            {
+                Mark = Mark, Id = Host.Id.ToString(), TypeName = TypeName, FamilyName = FamilyName, Wing = wing, SetName = setName
+            });
+        }
+
         public static HostAnalysis Analyze(Document doc, Element host, AppConfig cfg)
         {
             var a = new HostAnalysis { Host = host, Tag = "[" + host.Id + " " + host.Name + "] " };
             try
             {
+                a.Mark = host.get_Parameter(BuiltInParameter.ALL_MODEL_MARK)?.AsString() ?? "";
+                a.TypeName = WallSection.TypeNameOf(doc, host) ?? "";
+                if (host is FamilyInstance fi) a.FamilyName = fi.Symbol?.Family?.Name ?? "";
+                else a.FamilyName = host.Category?.Name ?? "";
+
                 RebarHostData hd = RebarHostData.GetRebarHostData(host);
                 if (hd == null || !hd.IsValidHost())
                 {
