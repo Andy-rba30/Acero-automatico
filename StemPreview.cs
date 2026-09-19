@@ -11,7 +11,8 @@ namespace RetainingWallRebar
 {
     /// <summary>
     /// Esquema de la seccion del muro con todo el armado: hormigon, tramos de horizontales
-    /// (bandas de color y cada barra como un punto), verticales y bastones con su patilla,
+    /// (bandas de color y cada barra como un punto, incluidas las que bajan a la zapata),
+    /// verticales con sus patillas, bastones (a trazos si van intercalados en otro plano),
     /// transversales de zapata con sus patas, longitudinales y refuerzos. Cada tipo de
     /// elemento tiene su color (ver Kinds) y se puede resaltar desde la leyenda o desde las
     /// filas de tramos. Zoom con la rueda (centrado en el cursor), desplazamiento
@@ -312,9 +313,6 @@ namespace RetainingWallRebar
         {
             if (_layout == null || _layout.Zones.Count == 0) return;
 
-            double dbVBack = _diameterFt(_cfg.StemVerticalBack.BarTypeName);
-            double dbVFront = _diameterFt(_cfg.StemVerticalFront.BarTypeName);
-            double cover = WallSection.Mm(_cfg.CoverStemMm);
             double labelX = W - LabelColumn;
 
             foreach (ResolvedZone z in _layout.Zones)
@@ -322,10 +320,13 @@ namespace RetainingWallRebar
                 string key = "zone:" + z.Index;
                 Brush brush = ZoneBrushes[z.Index % ZoneBrushes.Length];
                 double op = Lit(key) ? 0.5 : Dimmed(key) ? 0.12 : 0.25;
-                string zoneLabel = "Tramo " + (z.Index + 1) + " (de +" + M(z.VFrom - _s.FootingTop) + " a +" + M(z.VTo - _s.FootingTop) + " m)";
+                bool intoFooting = z.VLow < z.VFrom - 1e-9;
+                string zoneLabel = "Tramo " + (z.Index + 1) + " (de +" + M(z.VFrom - _s.FootingTop) + " a +" + M(z.VTo - _s.FootingTop) + " m" +
+                                   (intoFooting ? ", baja " + M(z.VFrom - z.VLow) + " m en la zapata)" : ")");
                 var band = new Polygon { Fill = brush, Opacity = op, Tag = Info(key, zoneLabel + FaceLines(z), (_s.FaceU0((z.VFrom + z.VTo) * 0.5) + _s.FaceU1((z.VFrom + z.VTo) * 0.5)) * 0.5, (z.VFrom + z.VTo) * 0.5) };
-                band.Points.Add(new Point(X(_s.FaceU0(z.VFrom)), Y(z.VFrom)));
-                band.Points.Add(new Point(X(_s.FaceU1(z.VFrom)), Y(z.VFrom)));
+                // la banda del tramo inferior sigue las caras (prolongadas) hasta su ultima barra en la zapata
+                band.Points.Add(new Point(X(_s.FaceU0(z.VLow)), Y(z.VLow)));
+                band.Points.Add(new Point(X(_s.FaceU1(z.VLow)), Y(z.VLow)));
                 band.Points.Add(new Point(X(_s.FaceU1(z.VTo)), Y(z.VTo)));
                 band.Points.Add(new Point(X(_s.FaceU0(z.VTo)), Y(z.VTo)));
                 Children.Add(band);
@@ -363,13 +364,14 @@ namespace RetainingWallRebar
                     if (rf == null) continue;
                     bool useU0 = back ? _s.HeelAtU0 : !_s.HeelAtU0;
                     double sign = useU0 ? +1 : -1;
-                    double dbV = back ? dbVBack : dbVFront;
                     double r = Math.Max(rf.Db * 0.5 * k, 2.5);
                     foreach (double v in rf.Heights)
                     {
-                        double u = (useU0 ? _s.FaceU0(v) : _s.FaceU1(v)) + sign * (cover + dbV + rf.Db * 0.5);
+                        double u = (useU0 ? _s.FaceU0(v) : _s.FaceU1(v)) + sign * (SectionBars.HorizontalOffset(_s, _cfg, back, v, rf.Db, _diameterFt) + rf.Db * 0.5);
                         string tip = "Horizontal " + (back ? "trasdos" : "intrados") + " · Tramo " + (z.Index + 1) + "\n" + rf.BarTypeName +
-                                     " @" + WallSection.ToMm(rf.Spacing) + " mm · " + rf.Heights.Count + " barras en el tramo\ncota +" + M(v - _s.FootingTop) + " m";
+                                     " @" + WallSection.ToMm(rf.Spacing) + " mm · " + rf.Heights.Count + " barras en el tramo" +
+                                     (rf.FootingCount > 0 ? " (" + rf.FootingCount + " en la zapata)" : "") +
+                                     "\ncota " + (v < _s.FootingTop ? "-" : "+") + M(Math.Abs(v - _s.FootingTop)) + " m";
                         var dot = new Ellipse
                         {
                             Width = 2 * r, Height = 2 * r,
@@ -389,10 +391,16 @@ namespace RetainingWallRebar
         private static string FaceLines(ResolvedZone z)
         {
             string t = "";
-            if (z.Back != null) t += "\ntrasdos " + z.Back.BarTypeName + " @" + WallSection.ToMm(z.Back.Spacing) + " (" + z.Back.Heights.Count + ")";
-            if (z.Front != null) t += "\nintrados " + z.Front.BarTypeName + " @" + WallSection.ToMm(z.Front.Spacing) + " (" + z.Front.Heights.Count + ")";
+            if (z.Back != null) t += "\ntrasdos " + z.Back.BarTypeName + " @" + WallSection.ToMm(z.Back.Spacing) + " (" + Count(z.Back) + ")";
+            if (z.Front != null) t += "\nintrados " + z.Front.BarTypeName + " @" + WallSection.ToMm(z.Front.Spacing) + " (" + Count(z.Front) + ")";
             return t;
         }
+
+        private static string Count(ResolvedFace f) =>
+            f.FootingCount > 0 ? f.Heights.Count + ", " + f.FootingCount + " en zapata" : f.Heights.Count.ToString();
+
+        private static string Shifted(double shiftFt) =>
+            shiftFt > 1e-6 ? "\napartada " + WallSection.ToMm(shiftFt) + " mm hacia dentro por un refuerzo" : "";
 
         /// <summary>
         /// Verticales y bastones (linea por cara con su patilla), transversales de zapata
@@ -415,8 +423,9 @@ namespace RetainingWallRebar
                 SectionBars.Poly p = SectionBars.Transverse(_s, _cfg, top, _diameterFt);
                 if (p != null)
                 {
+                    SectionBars.FootingLayer layer = SectionBars.Layer(_s, _cfg, top, _diameterFt);
                     string tipT = "Transversal zapata " + (top ? "superior" : "inferior") + "\n" + tr.BarTypeName +
-                                  " @" + tr.SpacingMm.ToString("0") + " mm · patas " + tr.LegMm.ToString("0") + " mm";
+                                  " @" + tr.SpacingMm.ToString("0") + " mm · patas " + tr.LegMm.ToString("0") + " mm" + Shifted(layer.TransShift);
                     (double u, double v) mid = p.Pts[p.Pts.Count / 2];
                     Children.Add(Bar(ToPts(p), p.Db * k, "transverse", tipT, Info("transverse", tipT, (p.Pts[1].u + p.Pts[p.Pts.Count - 2].u) * 0.5, mid.v)));
                 }
@@ -426,7 +435,7 @@ namespace RetainingWallRebar
                 if (l == null || l.Count == 0) continue;
                 double r = Math.Max(l.Db * 0.5 * k, 2);
                 string tipL = "Longitudinal zapata " + (top ? "superior" : "inferior") + "\n" + lg.BarTypeName +
-                              " @" + lg.SpacingMm.ToString("0") + " mm · " + l.Count + " barras";
+                              " @" + lg.SpacingMm.ToString("0") + " mm · " + l.Count + " barras" + Shifted(l.Shift);
                 for (int i = 0; i < l.Count; i++)
                 {
                     var dot = new Ellipse
@@ -448,7 +457,7 @@ namespace RetainingWallRebar
                 foreach (FootingReinfCfg r in _cfg.FootingReinforcements)
                 {
                     i++;
-                    SectionBars.Poly p = SectionBars.Reinforcement(_s, _cfg, r, _diameterFt, out _, out _);
+                    SectionBars.Poly p = SectionBars.Reinforcement(_s, _cfg, r, _diameterFt, out _);
                     if (p == null) continue;
                     string len = r.IsCenter
                         ? r.ToeLengthMm.ToString("0") + " hacia puntera + " + r.HeelLengthMm.ToString("0") + " hacia talon desde el eje"
@@ -471,27 +480,35 @@ namespace RetainingWallRebar
                     if (p == null) continue;
                     string tip = (dowel ? "Baston " : "Vertical ") + (back ? "trasdos" : "intrados") + "\n" + fam.BarTypeName +
                                  " @" + fam.SpacingMm.ToString("0") + " mm\n" +
-                                 (dowel ? "anclaje " + fam.EmbedMm.ToString("0") + " mm en zapata · altura " + fam.CutLengthMm.ToString("0") + " mm sobre la zapata"
-                                        : "patilla " + fam.LegMm.ToString("0") + " mm mas alla de la cara opuesta");
-                    (double u, double v) mid = ((p.Pts[0].u + p.Pts[1].u) * 0.5, (p.Pts[0].v + p.Pts[1].v) * 0.5);
-                    Children.Add(Bar(ToPts(p), p.Db * k, dowel ? "dowel" : "vertical", tip, Info(dowel ? "dowel" : "vertical", tip, mid.u, mid.v)));
+                                 (dowel ? "anclaje " + fam.EmbedMm.ToString("0") + " mm en zapata · altura " + fam.CutLengthMm.ToString("0") + " mm sobre la zapata\n" +
+                                          (fam.Stacked ? "apilado por dentro de la vertical, hueco " + fam.GapMm.ToString("0") + " mm" : "intercalado media separacion con las verticales (otro plano)")
+                                        : "patilla " + fam.LegMm.ToString("0") + " mm mas alla de la cara opuesta" +
+                                          (fam.CrownLegMm > 0 ? "\npatilla de coronacion " + fam.CrownLegMm.ToString("0") + " mm hacia la cara contraria" : "\nsin patilla de coronacion"));
+                    // el punto de anclaje de la etiqueta va a media altura del tramo vertical
+                    int a = 0;
+                    for (int i = 0; i + 1 < p.Pts.Count; i++)
+                        if (Math.Abs(p.Pts[i + 1].v - p.Pts[i].v) > Math.Abs(p.Pts[a + 1].v - p.Pts[a].v)) a = i;
+                    (double u, double v) mid = ((p.Pts[a].u + p.Pts[a + 1].u) * 0.5, (p.Pts[a].v + p.Pts[a + 1].v) * 0.5);
+                    Children.Add(Bar(ToPts(p), p.Db * k, dowel ? "dowel" : "vertical", tip, Info(dowel ? "dowel" : "vertical", tip, mid.u, mid.v), dowel && !fam.Stacked));
                 }
             }
         }
 
-        private Polyline Bar(List<Point> pts, double thicknessPx, string kind, string tip, BarInfo info)
+        private Polyline Bar(List<Point> pts, double thicknessPx, string kind, string tip, BarInfo info, bool dashed = false)
         {
             var pl = new Polyline
             {
                 Stroke = KindBrush(kind),
                 StrokeThickness = Math.Max(thicknessPx, 2) + (Lit(kind) ? 1.5 : 0),
                 StrokeLineJoin = PenLineJoin.Round,
-                StrokeStartLineCap = PenLineCap.Round,
-                StrokeEndLineCap = PenLineCap.Round,
+                StrokeStartLineCap = dashed ? PenLineCap.Flat : PenLineCap.Round,
+                StrokeEndLineCap = dashed ? PenLineCap.Flat : PenLineCap.Round,
                 Opacity = Dimmed(kind) ? 0.3 : 1,
                 ToolTip = tip,
                 Tag = info
             };
+            // a trazos = la barra va en otro plano (baston intercalado entre las verticales)
+            if (dashed) pl.StrokeDashArray = new DoubleCollection { 2.5, 1.5 };
             foreach (Point p in pts) pl.Points.Add(p);
             return pl;
         }

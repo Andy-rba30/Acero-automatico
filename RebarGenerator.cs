@@ -113,7 +113,10 @@ namespace RetainingWallRebar
 
         // =================================================================
         // Verticales del alzado: tramo inclinado siguiendo la cara + patilla que cruza
-        // bajo la pantalla (geometria en SectionBars.Vertical, compartida con el esquema)
+        // bajo la pantalla y patilla de coronacion opcional (geometria en
+        // SectionBars.Vertical, compartida con el esquema). Bastones: rectos, apilados
+        // por dentro de la vertical (misma linea a lo largo del muro) o intercalados
+        // media separacion con ella.
         // =================================================================
         private static void StemVerticals(Ctx c, bool back, bool dowel = false)
         {
@@ -125,7 +128,7 @@ namespace RetainingWallRebar
             string name = c.Plan.Label + (dowel ? "baston " : "vertical ") + (back ? "trasdos" : "intrados");
 
             double wa = c.Plan.VertW0, wb = c.Plan.VertW1;
-            if (dowel)
+            if (dowel && !f.Stacked)
             {
                 // intercalado media separacion con las verticales enteras de su cara
                 BarFamilyCfg main = back ? cfg.StemVerticalBack : cfg.StemVerticalFront;
@@ -134,7 +137,9 @@ namespace RetainingWallRebar
             if (wb < wa) { c.Result.Failed.Add(name + ": no cabe en el tramo"); return; }
 
             RebarBarType bt = FindBarType(c.Doc, f.BarTypeName);
-            SectionBars.Poly p = dowel ? SectionBars.Dowel(s, cfg, back, Dia(c), out _) : SectionBars.Vertical(s, cfg, back, Dia(c));
+            SectionBars.Poly p = dowel
+                ? SectionBars.Dowel(s, cfg, back, Dia(c), out _)
+                : SectionBars.Vertical(s, cfg, back, Dia(c), c.Plan.SwapFootingLayers, c.Plan.OtherTransverseBottomDb);
             if (p == null) { c.Result.Failed.Add(name + ": altura no valida"); return; }
 
             // La barra de definicion va en w = inicio del tramo (recubrimiento de extremo) y
@@ -171,7 +176,9 @@ namespace RetainingWallRebar
 
         // =================================================================
         // Refuerzos transversales cortos de zapata: barra recta apilada sobre su
-        // transversal (encima o debajo) y alineada con ella a lo largo del muro
+        // transversal (encima o debajo) y alineada con ella a lo largo del muro. Si
+        // van por fuera se quedan en el recubrimiento y es la transversal la que se
+        // aparta (SectionBars.Layer).
         // =================================================================
         private static void FootingReinforcements(Ctx c)
         {
@@ -188,7 +195,7 @@ namespace RetainingWallRebar
 
                 RebarBarType bt = FindBarType(c.Doc, r.BarTypeName);
                 double otherDb = r.Top ? c.Plan.OtherTransverseTopDb : c.Plan.OtherTransverseBottomDb;
-                SectionBars.Poly p = SectionBars.Reinforcement(s, cfg, r, Dia(c), out string warn, out _, c.Plan.SwapFootingLayers, otherDb);
+                SectionBars.Poly p = SectionBars.Reinforcement(s, cfg, r, Dia(c), out string warn, c.Plan.SwapFootingLayers, otherDb);
                 if (p == null) { c.Result.Failed.Add(name + ": " + warn); continue; }
 
                 // alineado con la transversal de su capa (apilado sobre ella)
@@ -225,8 +232,11 @@ namespace RetainingWallRebar
         // =================================================================
         // Reparto horizontal del alzado, por tramos de altura (StemZones). El alzado
         // va en talud, asi que o bien se coloca barra a barra (exacto) o por bandas
-        // (menos elementos). En un esquinero la barra gira la esquina con una pata
-        // de solape sobre la linea de barra de la otra ala (CornerFace).
+        // (menos elementos). Las barras del tramo inferior que bajan a la zapata van
+        // siempre barra a barra. Cada barra se apoya en la vertical de su cara o, a la
+        // altura de un baston apilado, en el baston (SectionBars.HorizontalOffset). En
+        // un esquinero la barra gira la esquina con una pata de solape sobre la linea
+        // de barra de la otra ala (CornerFace).
         // =================================================================
         private static void StemHorizontals(Ctx c, bool back)
         {
@@ -235,11 +245,9 @@ namespace RetainingWallRebar
             if (!(back ? cfg.StemHorizontalBackEnabled : cfg.StemHorizontalFrontEnabled)) return;
             string name = c.Plan.Label + "horizontal alzado " + (back ? "trasdos" : "intrados");
 
-            ZoneLayout layout = c.Plan.Zones ?? StemZones.Resolve(s, cfg, n => FindBarType(c.Doc, n).BarNominalDiameter, c.Plan.ShiftHorizontals);
+            Func<string, double> dia = Dia(c);
+            ZoneLayout layout = c.Plan.Zones ?? StemZones.Resolve(s, cfg, dia, c.Plan.ShiftHorizontals, c.Plan.SwapFootingLayers, c.Plan.OtherTransverseBottomDb);
             if (layout.Error != null) { c.Result.Failed.Add(name + ": " + layout.Error); return; }
-
-            RebarBarType btVert = FindBarType(c.Doc, (back ? cfg.StemVerticalBack : cfg.StemVerticalFront).BarTypeName);
-            double cov = Mm(cfg.CoverStemMm) + btVert.BarNominalDiameter;
 
             bool useU0 = back ? s.HeelAtU0 : !s.HeelAtU0;
             Func<double, double> face = useU0 ? (Func<double, double>)s.FaceU0 : s.FaceU1;
@@ -262,7 +270,7 @@ namespace RetainingWallRebar
                 // extremo libre y, si hay esquina en esta cara, pata sobre la otra ala.
                 List<Curve> BarAt(double v)
                 {
-                    double u = face(v) + sign * (cov + db * 0.5);
+                    double u = face(v) + sign * (SectionBars.HorizontalOffset(s, cfg, back, v, db, dia) + db * 0.5);
                     double wEnd = corner != null ? corner.OtherBarW(v) : c.Plan.HorW1;
                     if (wEnd - wa <= MinSeg) return null;
                     var cl = new List<Curve> { Line.CreateBound(s.P(u, v, wa), s.P(u, v, wEnd)) };
@@ -284,6 +292,14 @@ namespace RetainingWallRebar
                 }
                 else
                 {
+                    // las que bajan a la zapata, barra a barra; el resto por bandas desde VStart
+                    for (int i = 0; i < f.FootingCount; i++)
+                    {
+                        List<Curve> cl = BarAt(f.Heights[i]);
+                        if (cl == null) continue;
+                        any = true;
+                        Place(c, zname + " v=" + ToMm(f.Heights[i]) + " mm", bt, s.DirV, cl, 0, 0, Layout.Single, true);
+                    }
                     for (double v = f.VStart; v <= f.VEnd; v += band)
                     {
                         double vHi = Math.Min(v + band, f.VEnd);

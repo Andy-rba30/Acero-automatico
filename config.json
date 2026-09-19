@@ -18,10 +18,10 @@
 
   "partitionTemplate": "MC-{marca}",
 
-  "stemVerticalBack":  { "enabled": true, "barTypeName": "7/8", "spacingMm": 200, "legMm": 900 },
-  "stemVerticalFront": { "enabled": true, "barTypeName": "7/8", "spacingMm": 200, "legMm": 900 },
-  "stemDowelBack":     { "enabled": false, "barTypeName": "7/8", "spacingMm": 200, "embedMm": 500, "cutLengthMm": 2000 },
-  "stemDowelFront":    { "enabled": false, "barTypeName": "7/8", "spacingMm": 200, "embedMm": 500, "cutLengthMm": 2000 },
+  "stemVerticalBack":  { "enabled": true, "barTypeName": "7/8", "spacingMm": 200, "legMm": 900, "crownLegMm": 0 },
+  "stemVerticalFront": { "enabled": true, "barTypeName": "7/8", "spacingMm": 200, "legMm": 900, "crownLegMm": 0 },
+  "stemDowelBack":     { "enabled": false, "barTypeName": "7/8", "spacingMm": 200, "embedMm": 500, "cutLengthMm": 2000, "stacked": true, "gapMm": 0 },
+  "stemDowelFront":    { "enabled": false, "barTypeName": "7/8", "spacingMm": 200, "embedMm": 500, "cutLengthMm": 2000, "stacked": true, "gapMm": 0 },
 
   "stemHorizontalBackEnabled": true,
   "stemHorizontalFrontEnabled": true,
