@@ -78,6 +78,7 @@ namespace RetainingWallRebar
             StemVerticals(c, back: false);
             FootingTransverse(c, top: false);
             FootingTransverse(c, top: true);
+            FootingReinforcements(c);
             FootingLongitudinal(c, top: false);
             FootingLongitudinal(c, top: true);
             StemHorizontals(c, back: true);
@@ -95,8 +96,19 @@ namespace RetainingWallRebar
             return result;
         }
 
+        private static Func<string, double> Dia(Ctx c) => n => FindBarType(c.Doc, n).BarNominalDiameter;
+
+        private static List<Curve> Curves(WallSection s, SectionBars.Poly p, double w)
+        {
+            var curves = new List<Curve>();
+            for (int i = 0; i + 1 < p.Pts.Count; i++)
+                AddLine(curves, s.P(p.Pts[i].u, p.Pts[i].v, w), s.P(p.Pts[i + 1].u, p.Pts[i + 1].v, w));
+            return curves;
+        }
+
         // =================================================================
-        // Verticales del alzado: tramo inclinado siguiendo la cara + patilla en zapata
+        // Verticales del alzado: tramo inclinado siguiendo la cara + patilla que cruza
+        // bajo la pantalla (geometria en SectionBars.Vertical, compartida con el esquema)
         // =================================================================
         private static void StemVerticals(Ctx c, bool back)
         {
@@ -110,37 +122,11 @@ namespace RetainingWallRebar
             if (wb < wa) { c.Result.Failed.Add(name + ": no cabe en el tramo"); return; }
 
             RebarBarType bt = FindBarType(c.Doc, f.BarTypeName);
-            double db = bt.BarNominalDiameter;
-            double cov = Mm(cfg.CoverStemMm);
-
-            // lado de trabajo: u0 = cara u minima, u1 = cara u maxima
-            bool useU0 = back ? s.HeelAtU0 : !s.HeelAtU0;
-
-            Func<double, double> face = useU0 ? (Func<double, double>)s.FaceU0 : s.FaceU1;
-            double sign = useU0 ? +1 : -1;               // hacia el interior del alzado
-            double uAt(double v) => face(v) + sign * (cov + db * 0.5);
-
-            double vTop = s.LenV - Mm(cfg.CoverStemTopMm) - db * 0.5;
-            double vBot = Mm(cfg.CoverFootingBottomMm) + db * 0.5;
-            if (f.CutLengthMm > 0) vTop = Math.Min(vTop, s.FootingTop + Mm(f.CutLengthMm));
+            SectionBars.Poly p = SectionBars.Vertical(s, cfg, back, Dia(c));
 
             // La barra de definicion va en w = inicio del tramo (recubrimiento de extremo) y
             // el array avanza desde ahi hasta el final que marca el plan.
-            XYZ pTop = s.P(uAt(vTop), vTop, wa);
-            XYZ pBend = s.P(uAt(vBot), vBot, wa);
-
-            // patilla horizontal hacia el interior de la zapata, acotada por el canto util
-            double leg = Mm(f.LegMm);
-            double uBend = uAt(vBot);
-            double uEnd = uBend - sign * leg;           // cruza hacia el lado opuesto
-            double uLim0 = Mm(cfg.CoverFootingSideMm) + db;
-            double uLim1 = s.LenU - Mm(cfg.CoverFootingSideMm) - db;
-            uEnd = Math.Min(Math.Max(uEnd, uLim0), uLim1);
-            XYZ pLeg = s.P(uEnd, vBot, wa);
-
-            var curves = new List<Curve>();
-            AddLine(curves, pTop, pBend);
-            AddLine(curves, pBend, pLeg);
+            List<Curve> curves = Curves(s, p, wa);
             if (curves.Count == 0) { c.Result.Failed.Add(name + ": geometria degenerada"); return; }
 
             Place(c, name, bt, s.DirW, curves, Mm(f.SpacingMm), wb - wa, Layout.ArrayIfLonger, true);
@@ -161,37 +147,47 @@ namespace RetainingWallRebar
             if (wb < wa) { c.Result.Failed.Add(name + ": no cabe en el tramo"); return; }
 
             RebarBarType bt = FindBarType(c.Doc, f.BarTypeName);
-            double db = bt.BarNominalDiameter;
+            double otherDb = top ? c.Plan.OtherTransverseTopDb : c.Plan.OtherTransverseBottomDb;
+            SectionBars.Poly p = SectionBars.Transverse(s, cfg, top, Dia(c), c.Plan.SwapFootingLayers, otherDb);
 
-            // Capa: normalmente el transversal es la capa exterior. Con las capas
-            // intercambiadas (ala no pasante con malla cruzada) va por dentro del
-            // longitudinal propio y del transversal del otro ala que cruza el bloque.
-            double below = 0;
-            if (c.Plan.SwapFootingLayers)
-            {
-                double dbLong = FindBarType(c.Doc, (top ? cfg.FootingLongitudinalTop : cfg.FootingLongitudinalBottom).BarTypeName).BarNominalDiameter;
-                double dbOther = top ? c.Plan.OtherTransverseTopDb : c.Plan.OtherTransverseBottomDb;
-                below = Math.Max(dbLong, dbOther);
-            }
-
-            double v = top
-                ? s.FootingTop - Mm(cfg.CoverFootingTopMm) - below - db * 0.5
-                : Mm(cfg.CoverFootingBottomMm) + below + db * 0.5;
-
-            double ua = Mm(cfg.CoverFootingSideMm) + db * 0.5;
-            double ub = s.LenU - ua;
-            double leg = Mm(f.LegMm);
-            double legSign = top ? -1 : +1;   // superior baja, inferior sube
-            double vLeg = v + legSign * leg;
-            vLeg = Math.Min(Math.Max(vLeg, Mm(cfg.CoverFootingBottomMm)), s.FootingTop - Mm(cfg.CoverFootingTopMm));
-
-            var curves = new List<Curve>();
-            if (leg > MinSeg) AddLine(curves, s.P(ua, vLeg, wa), s.P(ua, v, wa));
-            AddLine(curves, s.P(ua, v, wa), s.P(ub, v, wa));
-            if (leg > MinSeg) AddLine(curves, s.P(ub, v, wa), s.P(ub, vLeg, wa));
+            List<Curve> curves = Curves(s, p, wa);
             if (curves.Count == 0) { c.Result.Failed.Add(name + ": geometria degenerada"); return; }
 
             Place(c, name, bt, s.DirW, curves, Mm(f.SpacingMm), wb - wa, Layout.ArrayIfLonger, true);
+        }
+
+        // =================================================================
+        // Refuerzos transversales cortos de zapata: barra recta en la capa de su
+        // transversal, intercalada media separacion con ella a lo largo del muro
+        // =================================================================
+        private static void FootingReinforcements(Ctx c)
+        {
+            WallSection s = c.S;
+            AppConfig cfg = c.Cfg;
+            if (cfg.FootingReinforcements == null) return;
+            int i = 0;
+            foreach (FootingReinfCfg r in cfg.FootingReinforcements)
+            {
+                i++;
+                string name = c.Plan.Label + "refuerzo zapata " + r.Describe + " #" + i;
+                double wa0 = c.Plan.TransW0, wb = c.Plan.TransW1;
+                if (wb < wa0) { c.Result.Failed.Add(name + ": no cabe en el tramo"); continue; }
+
+                RebarBarType bt = FindBarType(c.Doc, r.BarTypeName);
+                double otherDb = r.Top ? c.Plan.OtherTransverseTopDb : c.Plan.OtherTransverseBottomDb;
+                SectionBars.Poly p = SectionBars.Reinforcement(s, cfg, r, Dia(c), out string warn, c.Plan.SwapFootingLayers, otherDb);
+                if (p == null) { c.Result.Failed.Add(name + ": " + warn); continue; }
+
+                // intercalado media separacion con la transversal de su capa
+                BarFamilyCfg tr = r.Top ? cfg.FootingTransverseTop : cfg.FootingTransverseBottom;
+                double shift = Mm(tr.Enabled ? tr.SpacingMm : r.SpacingMm) * 0.5;
+                double wa = wa0 + shift;
+                if (wb - wa < -MinSeg) { c.Result.Failed.Add(name + ": no cabe en el tramo"); continue; }
+
+                List<Curve> curves = Curves(s, p, wa);
+                if (curves.Count == 0) { c.Result.Failed.Add(name + ": geometria degenerada"); continue; }
+                Place(c, name, bt, s.DirW, curves, Mm(r.SpacingMm), Math.Max(0, wb - wa), Layout.ArrayIfLonger, true);
+            }
         }
 
         // =================================================================
@@ -209,22 +205,13 @@ namespace RetainingWallRebar
             if (wb - wa <= MinSeg) { c.Result.Failed.Add(name + ": no cabe en el tramo"); return; }
 
             RebarBarType bt = FindBarType(c.Doc, f.BarTypeName);
-            double db = bt.BarNominalDiameter;
-            RebarBarType btTrans = FindBarType(c.Doc, (top ? cfg.FootingTransverseTop : cfg.FootingTransverseBottom).BarTypeName);
+            double otherDb = top ? c.Plan.OtherTransverseTopDb : c.Plan.OtherTransverseBottomDb;
+            SectionBars.LongitudinalSet l = SectionBars.Longitudinal(s, cfg, top, Dia(c), c.Plan.SwapFootingLayers, otherDb);
+            if (l.Span <= MinSeg) { c.Result.Failed.Add(name + ": no cabe en el ancho de zapata"); return; }
 
-            // se apoya por dentro del transversal (o por fuera, con las capas intercambiadas)
-            double below = c.Plan.SwapFootingLayers ? 0 : btTrans.BarNominalDiameter;
-            double v = top
-                ? s.FootingTop - Mm(cfg.CoverFootingTopMm) - below - db * 0.5
-                : Mm(cfg.CoverFootingBottomMm) + below + db * 0.5;
+            var curves = new List<Curve> { Line.CreateBound(s.P(l.U0, l.V, wa), s.P(l.U0, l.V, wb)) };
 
-            double u0 = Mm(cfg.CoverFootingSideMm) + db * 0.5;
-            double span = s.LenU - 2 * u0;
-            if (span <= MinSeg) { c.Result.Failed.Add(name + ": no cabe en el ancho de zapata"); return; }
-
-            var curves = new List<Curve> { Line.CreateBound(s.P(u0, v, wa), s.P(u0, v, wb)) };
-
-            Place(c, name, bt, s.DirU, curves, Mm(f.SpacingMm), span, Layout.Array, true);
+            Place(c, name, bt, s.DirU, curves, l.Spacing, l.Span, Layout.Array, true);
         }
 
         // =================================================================

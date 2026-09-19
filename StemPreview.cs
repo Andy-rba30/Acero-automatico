@@ -187,84 +187,77 @@ namespace RetainingWallRebar
         }
 
         private static readonly Brush BarBrush = new SolidColorBrush(Color.FromRgb(0x50, 0x50, 0x50));
+        private static readonly Brush ReinfBrush = new SolidColorBrush(Color.FromRgb(0x1F, 0x3A, 0x8A));
 
         /// <summary>
         /// Verticales (linea por cara con su patilla), transversales de zapata (linea con
-        /// patas) y longitudinales de zapata (puntos). Misma geometria que RebarGenerator.
+        /// patas) y longitudinales de zapata (puntos). Geometria de SectionBars, la misma
+        /// que usa el generador.
         /// </summary>
         private void DrawFixedFamilies(double k, Func<double, double> X, Func<double, double> Y)
         {
-            double covSide = WallSection.Mm(_cfg.CoverFootingSideMm);
-            double covBot = WallSection.Mm(_cfg.CoverFootingBottomMm);
-            double covTop = WallSection.Mm(_cfg.CoverFootingTopMm);
-            double covStem = WallSection.Mm(_cfg.CoverStemMm);
-            double covCrown = WallSection.Mm(_cfg.CoverStemTopMm);
-
-            // verticales
-            for (int f = 0; f < 2; f++)
+            List<Point> ToPts(SectionBars.Poly p)
             {
-                bool back = f == 0;
-                BarFamilyCfg fam = back ? _cfg.StemVerticalBack : _cfg.StemVerticalFront;
-                if (!fam.Enabled) continue;
-                double db = _diameterFt(fam.BarTypeName);
-                bool useU0 = back ? _s.HeelAtU0 : !_s.HeelAtU0;
-                double sign = useU0 ? +1 : -1;
-                double uAt(double v) => (useU0 ? _s.FaceU0(v) : _s.FaceU1(v)) + sign * (covStem + db * 0.5);
-                double vTop = _s.LenV - covCrown - db * 0.5;
-                double vBot = covBot + db * 0.5;
-                if (fam.CutLengthMm > 0) vTop = Math.Min(vTop, _s.FootingTop + WallSection.Mm(fam.CutLengthMm));
-                double uEnd = uAt(vBot) - sign * WallSection.Mm(fam.LegMm);
-                uEnd = Math.Min(Math.Max(uEnd, covSide + db), _s.LenU - covSide - db);
-                var pts = new List<Point> { new Point(X(uAt(vTop)), Y(vTop)), new Point(X(uAt(vBot)), Y(vBot)), new Point(X(uEnd), Y(vBot)) };
-                Children.Add(Bar(pts, db * k, "Vertical " + (back ? "trasdos" : "intrados") + ": " + fam.BarTypeName +
-                                 " @" + fam.SpacingMm.ToString("0") + " mm, patilla " + fam.LegMm.ToString("0") + " mm"));
+                var pts = new List<Point>();
+                foreach (var q in p.Pts) pts.Add(new Point(X(q.u), Y(q.v)));
+                return pts;
             }
 
-            // transversales y longitudinales de zapata
             for (int t = 0; t < 2; t++)
             {
                 bool top = t == 1;
                 BarFamilyCfg tr = top ? _cfg.FootingTransverseTop : _cfg.FootingTransverseBottom;
+                SectionBars.Poly p = SectionBars.Transverse(_s, _cfg, top, _diameterFt);
+                if (p != null)
+                    Children.Add(Bar(ToPts(p), p.Db * k, "Transversal zapata " + (top ? "superior" : "inferior") + ": " + tr.BarTypeName +
+                                     " @" + tr.SpacingMm.ToString("0") + " mm, patas " + tr.LegMm.ToString("0") + " mm"));
+
                 BarFamilyCfg lg = top ? _cfg.FootingLongitudinalTop : _cfg.FootingLongitudinalBottom;
-                double dbT = _diameterFt(tr.BarTypeName);
-                if (tr.Enabled)
+                SectionBars.LongitudinalSet l = SectionBars.Longitudinal(_s, _cfg, top, _diameterFt);
+                if (l == null || l.Count == 0) continue;
+                double r = Math.Max(l.Db * 0.5 * k, 2);
+                for (int i = 0; i < l.Count; i++)
                 {
-                    double v = top ? _s.FootingTop - covTop - dbT * 0.5 : covBot + dbT * 0.5;
-                    double ua = covSide + dbT * 0.5, ub = _s.LenU - ua;
-                    double vLeg = v + (top ? -1 : +1) * WallSection.Mm(tr.LegMm);
-                    vLeg = Math.Min(Math.Max(vLeg, covBot), _s.FootingTop - covTop);
-                    var pts = new List<Point>();
-                    if (tr.LegMm > 0) pts.Add(new Point(X(ua), Y(vLeg)));
-                    pts.Add(new Point(X(ua), Y(v)));
-                    pts.Add(new Point(X(ub), Y(v)));
-                    if (tr.LegMm > 0) pts.Add(new Point(X(ub), Y(vLeg)));
-                    Children.Add(Bar(pts, dbT * k, "Transversal zapata " + (top ? "superior" : "inferior") + ": " + tr.BarTypeName +
-                                     " @" + tr.SpacingMm.ToString("0") + " mm"));
-                }
-                if (lg.Enabled)
-                {
-                    double db = _diameterFt(lg.BarTypeName);
-                    double v = top ? _s.FootingTop - covTop - dbT - db * 0.5 : covBot + dbT + db * 0.5;
-                    double u0 = covSide + db * 0.5;
-                    double span = _s.LenU - 2 * u0;
-                    double spacing = WallSection.Mm(lg.SpacingMm);
-                    if (span <= 0 || spacing <= 0) continue;
-                    int n = (int)Math.Ceiling(span / spacing - 1e-9) + 1;
-                    double r = Math.Max(db * 0.5 * k, 2);
-                    for (int i = 0; i < n; i++)
+                    var dot = new Ellipse
                     {
-                        double u = u0 + (n > 1 ? span * i / (n - 1) : 0);
-                        var dot = new Ellipse
-                        {
-                            Width = 2 * r, Height = 2 * r, Fill = BarBrush,
-                            ToolTip = "Longitudinal zapata " + (top ? "superior" : "inferior") + ": " + lg.BarTypeName +
-                                      " @" + lg.SpacingMm.ToString("0") + " mm (" + n + " barras)"
-                        };
-                        SetLeft(dot, X(u) - r);
-                        SetTop(dot, Y(v) - r);
-                        Children.Add(dot);
-                    }
+                        Width = 2 * r, Height = 2 * r, Fill = BarBrush,
+                        ToolTip = "Longitudinal zapata " + (top ? "superior" : "inferior") + ": " + lg.BarTypeName +
+                                  " @" + lg.SpacingMm.ToString("0") + " mm (" + l.Count + " barras)"
+                    };
+                    SetLeft(dot, X(l.UAt(i)) - r);
+                    SetTop(dot, Y(l.V) - r);
+                    Children.Add(dot);
                 }
+            }
+
+            // refuerzos cortos, en azul oscuro para distinguirlos de la transversal
+            if (_cfg.FootingReinforcements != null)
+            {
+                int i = 0;
+                foreach (FootingReinfCfg r in _cfg.FootingReinforcements)
+                {
+                    i++;
+                    SectionBars.Poly p = SectionBars.Reinforcement(_s, _cfg, r, _diameterFt, out _);
+                    if (p == null) continue;
+                    string len = r.IsCenter
+                        ? r.ToeLengthMm.ToString("0") + " hacia puntera + " + r.HeelLengthMm.ToString("0") + " hacia talon desde el eje"
+                        : r.LengthMm.ToString("0") + " mm desde el borde";
+                    Polyline pl = Bar(ToPts(p), p.Db * k + 1, "Refuerzo zapata " + r.Describe + " #" + i + ": " + r.BarTypeName +
+                                      " @" + r.SpacingMm.ToString("0") + " mm, " + len);
+                    pl.Stroke = ReinfBrush;
+                    Children.Add(pl);
+                }
+            }
+
+            for (int f = 0; f < 2; f++)
+            {
+                bool back = f == 0;
+                BarFamilyCfg fam = back ? _cfg.StemVerticalBack : _cfg.StemVerticalFront;
+                SectionBars.Poly p = SectionBars.Vertical(_s, _cfg, back, _diameterFt);
+                if (p == null) continue;
+                Children.Add(Bar(ToPts(p), p.Db * k, "Vertical " + (back ? "trasdos" : "intrados") + ": " + fam.BarTypeName +
+                                 " @" + fam.SpacingMm.ToString("0") + " mm, patilla " + fam.LegMm.ToString("0") +
+                                 " mm mas alla de la cara opuesta" + (fam.CutLengthMm > 0 ? ", baston " + fam.CutLengthMm.ToString("0") + " mm" : "")));
             }
         }
 

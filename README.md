@@ -143,9 +143,13 @@ Al lanzar el comando con uno o varios muros seleccionados se abre una ventana:
    está activa, el **tipo de barra** (desplegable con los `RebarBarType` cargados
    en el proyecto; se puede escribir un nombre parcial), la separación, la
    patilla/pata donde aplica y la longitud de bastón en las verticales.
-4. **Recubrimientos** y **opciones**: horizontales por bandas, ala pasante por
+4. **Refuerzos transversales de zapata**: tabla con un refuerzo por fila (capa,
+   posición puntera/talón/centro, tipo, separación y longitudes) con botones
+   para añadir y quitar; los avisos (longitud que no asoma de la pantalla,
+   barra acortada al ancho de la zapata) aparecen debajo.
+5. **Recubrimientos** y **opciones**: horizontales por bandas, ala pasante por
    defecto, pata de solape en esquina y malla de zapata en el bloque.
-5. **Armar** crea la armadura con esos valores solo para esta ejecución.
+6. **Armar** crea la armadura con esos valores solo para esta ejecución.
    **Guardar como valores por defecto** los escribe en el `config.json` que está
    junto a la DLL, de modo que la próxima vez la ventana arranque con ellos.
    (Compilar en Debug vuelve a copiar el `config.json` del proyecto encima.)
@@ -217,12 +221,30 @@ posición en coordenadas locales del muro (del ala, en un esquinero).
 
 | Familia | Colocación |
 |---|---|
-| Vertical trasdós | sigue la cara inclinada, baja hasta el fondo de zapata y gira la patilla |
-| Vertical intradós | ídem, patilla en sentido contrario |
+| Vertical trasdós | sigue la cara inclinada, se apoya sobre la parrilla inferior y su patilla cruza bajo la pantalla hasta sobresalir `legMm` de la cara opuesta |
+| Vertical intradós | ídem en sentido contrario, con la patilla apilada un diámetro sobre la del trasdós |
 | Reparto horizontal alzado ×2 caras | por tramos de altura (1 a 3), barra a barra (exacto con el talud) o por bandas; en L con pata en la esquina |
-| Transversal inferior de zapata | con patas verticales en los extremos |
-| Transversal superior de zapata | ídem |
-| Reparto longitudinal de zapata ×2 capas | una barra definida + array en el ancho |
+| Transversal inferior de zapata | capa exterior, con patas verticales hacia arriba en los extremos |
+| Transversal superior de zapata | ídem hacia abajo, con las patas por dentro de las de la inferior |
+| Reparto longitudinal de zapata ×2 capas | por dentro del transversal y de sus patas; una barra definida + array en el ancho |
+
+Además, una lista opcional de **refuerzos transversales cortos de zapata**
+(`footingReinforcements`): barras rectas en la capa de la transversal superior o
+inferior, intercaladas media separación con ella, en tres posiciones:
+
+- `"toe"` (puntera) y `"heel"` (talón): `lengthMm` medido desde el borde de la
+  zapata hacia dentro (con el recubrimiento lateral); si es mayor que el vuelo,
+  pasa bajo la pantalla.
+- `"center"`: `toeLengthMm` hacia la puntera y `heelLengthMm` hacia el talón,
+  medidos desde el eje de la pantalla en su base. Para 600 de pantalla y 1000 a
+  cada cara: 1300 y 1300.
+
+Cada refuerzo lleva `top` (capa), `barTypeName` y `spacingMm`. En la ventana se
+añaden y quitan con botones; el esquema los dibuja en azul oscuro. En los
+esquineros siguen las mismas reglas de bloque de esquina que las transversales.
+
+La geometría en sección de estas familias está en `SectionBars`, que usan tanto
+el generador como el esquema de la ventana.
 
 Las transversales y verticales se crean como **un solo elemento `Rebar` con array**
 a lo largo del tramo, así que el despiece queda limpio. En un esquinero cada ala
@@ -261,7 +283,9 @@ Requisitos previos en el modelo:
   respetando el talud exactamente (≈35 elementos por cara en un muro de 7 m).
   Un valor como `1000` los agrupa en arrays por bandas: muchos menos elementos,
   a costa de un pequeño desvío respecto a la cara dentro de cada banda.
-- `legMm` en las verticales es la longitud de la patilla en zapata (los 900 del plano).
+- `legMm` en las verticales es lo que la patilla sobresale de la cara opuesta del
+  alzado tras cruzar bajo la pantalla (los 900 del plano). En las transversales
+  es la longitud de las patas verticales de los extremos.
 - `cutLengthMm` > 0 convierte esa familia en bastón cortado a esa altura sobre
   la cara superior de zapata.
 - `cornerThroughWing`: `"auto"` (ala de tramo recto más largo), `"1"` o `"2"`.
