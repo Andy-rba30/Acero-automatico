@@ -49,6 +49,7 @@ namespace RetainingWallRebar
             public Document Doc;
             public Element Host;
             public WallSection S;
+            public WingPlan Plan;
             public AppConfig Cfg;
             public string Partition;
             public BuildResult Result;
@@ -57,13 +58,20 @@ namespace RetainingWallRebar
             public bool DryRun => Result.Rejected.Count > 0;
         }
 
+        /// <summary>Arma un tramo recto completo.</summary>
         public static BuildResult Build(Document doc, Element host, WallSection s, AppConfig cfg)
+        {
+            return Build(doc, host, s, WingPlan.Straight(s, cfg), cfg, new BuildResult());
+        }
+
+        /// <summary>Arma un tramo (recto o ala de un esquinero) segun su plan, acumulando en result.</summary>
+        public static BuildResult Build(Document doc, Element host, WallSection s, WingPlan plan, AppConfig cfg, BuildResult result)
         {
             var c = new Ctx
             {
-                Doc = doc, Host = host, S = s, Cfg = cfg,
+                Doc = doc, Host = host, S = s, Plan = plan, Cfg = cfg,
                 Partition = PartitionName(doc, host),
-                Result = new BuildResult()
+                Result = result
             };
 
             StemVerticals(c, back: true);
@@ -77,6 +85,16 @@ namespace RetainingWallRebar
             return c.Result;
         }
 
+        /// <summary>Arma las dos alas de un muro esquinero en L con sus reglas de esquina.</summary>
+        public static BuildResult BuildCorner(Document doc, Element host, CornerWall cw, AppConfig cfg)
+        {
+            WingPlan[] plans = cw.BuildPlans(doc, cfg);
+            var result = new BuildResult();
+            for (int k = 0; k < 2; k++)
+                Build(doc, host, cw.Wings[k], plans[k], cfg, result);
+            return result;
+        }
+
         // =================================================================
         // Verticales del alzado: tramo inclinado siguiendo la cara + patilla en zapata
         // =================================================================
@@ -86,7 +104,10 @@ namespace RetainingWallRebar
             AppConfig cfg = c.Cfg;
             BarFamilyCfg f = back ? cfg.StemVerticalBack : cfg.StemVerticalFront;
             if (!f.Enabled) return;
-            string name = "vertical " + (back ? "trasdos" : "intrados");
+            string name = c.Plan.Label + "vertical " + (back ? "trasdos" : "intrados");
+
+            double wa = c.Plan.VertW0, wb = c.Plan.VertW1;
+            if (wb < wa) { c.Result.Failed.Add(name + ": no cabe en el tramo"); return; }
 
             RebarBarType bt = FindBarType(c.Doc, f.BarTypeName);
             double db = bt.BarNominalDiameter;
@@ -103,10 +124,8 @@ namespace RetainingWallRebar
             double vBot = Mm(cfg.CoverFootingBottomMm) + db * 0.5;
             if (f.CutLengthMm > 0) vTop = Math.Min(vTop, s.FootingTop + Mm(f.CutLengthMm));
 
-            // La barra de definicion va en w = recubrimiento de extremo y el array avanza
-            // desde ahi hasta LenW - recubrimiento. (Antes se definia en w = 0, es decir,
-            // con el eje de la primera barra sobre la propia cara de testa.)
-            double wa = Mm(cfg.CoverEndMm);
+            // La barra de definicion va en w = inicio del tramo (recubrimiento de extremo) y
+            // el array avanza desde ahi hasta el final que marca el plan.
             XYZ pTop = s.P(uAt(vTop), vTop, wa);
             XYZ pBend = s.P(uAt(vBot), vBot, wa);
 
@@ -124,7 +143,7 @@ namespace RetainingWallRebar
             AddLine(curves, pBend, pLeg);
             if (curves.Count == 0) { c.Result.Failed.Add(name + ": geometria degenerada"); return; }
 
-            Place(c, name, bt, s.DirW, curves, Mm(f.SpacingMm), s.LenW - 2 * wa, Layout.ArrayIfLonger, true);
+            Place(c, name, bt, s.DirW, curves, Mm(f.SpacingMm), wb - wa, Layout.ArrayIfLonger, true);
         }
 
         // =================================================================
@@ -136,14 +155,28 @@ namespace RetainingWallRebar
             AppConfig cfg = c.Cfg;
             BarFamilyCfg f = top ? cfg.FootingTransverseTop : cfg.FootingTransverseBottom;
             if (!f.Enabled) return;
-            string name = "transversal zapata " + (top ? "superior" : "inferior");
+            string name = c.Plan.Label + "transversal zapata " + (top ? "superior" : "inferior");
+
+            double wa = c.Plan.TransW0, wb = c.Plan.TransW1;
+            if (wb < wa) { c.Result.Failed.Add(name + ": no cabe en el tramo"); return; }
 
             RebarBarType bt = FindBarType(c.Doc, f.BarTypeName);
             double db = bt.BarNominalDiameter;
 
+            // Capa: normalmente el transversal es la capa exterior. Con las capas
+            // intercambiadas (ala no pasante con malla cruzada) va por dentro del
+            // longitudinal propio y del transversal del otro ala que cruza el bloque.
+            double below = 0;
+            if (c.Plan.SwapFootingLayers)
+            {
+                double dbLong = FindBarType(c.Doc, (top ? cfg.FootingLongitudinalTop : cfg.FootingLongitudinalBottom).BarTypeName).BarNominalDiameter;
+                double dbOther = top ? c.Plan.OtherTransverseTopDb : c.Plan.OtherTransverseBottomDb;
+                below = Math.Max(dbLong, dbOther);
+            }
+
             double v = top
-                ? s.FootingTop - Mm(cfg.CoverFootingTopMm) - db * 0.5
-                : Mm(cfg.CoverFootingBottomMm) + db * 0.5;
+                ? s.FootingTop - Mm(cfg.CoverFootingTopMm) - below - db * 0.5
+                : Mm(cfg.CoverFootingBottomMm) + below + db * 0.5;
 
             double ua = Mm(cfg.CoverFootingSideMm) + db * 0.5;
             double ub = s.LenU - ua;
@@ -152,14 +185,13 @@ namespace RetainingWallRebar
             double vLeg = v + legSign * leg;
             vLeg = Math.Min(Math.Max(vLeg, Mm(cfg.CoverFootingBottomMm)), s.FootingTop - Mm(cfg.CoverFootingTopMm));
 
-            double wa = Mm(cfg.CoverEndMm);   // barra de definicion en w = recubrimiento (antes w = 0)
             var curves = new List<Curve>();
             if (leg > MinSeg) AddLine(curves, s.P(ua, vLeg, wa), s.P(ua, v, wa));
             AddLine(curves, s.P(ua, v, wa), s.P(ub, v, wa));
             if (leg > MinSeg) AddLine(curves, s.P(ub, v, wa), s.P(ub, vLeg, wa));
             if (curves.Count == 0) { c.Result.Failed.Add(name + ": geometria degenerada"); return; }
 
-            Place(c, name, bt, s.DirW, curves, Mm(f.SpacingMm), s.LenW - 2 * wa, Layout.ArrayIfLonger, true);
+            Place(c, name, bt, s.DirW, curves, Mm(f.SpacingMm), wb - wa, Layout.ArrayIfLonger, true);
         }
 
         // =================================================================
@@ -171,23 +203,25 @@ namespace RetainingWallRebar
             AppConfig cfg = c.Cfg;
             BarFamilyCfg f = top ? cfg.FootingLongitudinalTop : cfg.FootingLongitudinalBottom;
             if (!f.Enabled) return;
-            string name = "longitudinal zapata " + (top ? "superior" : "inferior");
+            string name = c.Plan.Label + "longitudinal zapata " + (top ? "superior" : "inferior");
+
+            double wa = c.Plan.LongW0, wb = c.Plan.LongW1;
+            if (wb - wa <= MinSeg) { c.Result.Failed.Add(name + ": no cabe en el tramo"); return; }
 
             RebarBarType bt = FindBarType(c.Doc, f.BarTypeName);
             double db = bt.BarNominalDiameter;
             RebarBarType btTrans = FindBarType(c.Doc, (top ? cfg.FootingTransverseTop : cfg.FootingTransverseBottom).BarTypeName);
 
-            // se apoya por dentro del transversal
+            // se apoya por dentro del transversal (o por fuera, con las capas intercambiadas)
+            double below = c.Plan.SwapFootingLayers ? 0 : btTrans.BarNominalDiameter;
             double v = top
-                ? s.FootingTop - Mm(cfg.CoverFootingTopMm) - btTrans.BarNominalDiameter - db * 0.5
-                : Mm(cfg.CoverFootingBottomMm) + btTrans.BarNominalDiameter + db * 0.5;
+                ? s.FootingTop - Mm(cfg.CoverFootingTopMm) - below - db * 0.5
+                : Mm(cfg.CoverFootingBottomMm) + below + db * 0.5;
 
             double u0 = Mm(cfg.CoverFootingSideMm) + db * 0.5;
             double span = s.LenU - 2 * u0;
             if (span <= MinSeg) { c.Result.Failed.Add(name + ": no cabe en el ancho de zapata"); return; }
 
-            double wa = Mm(cfg.CoverEndMm);
-            double wb = s.LenW - wa;
             var curves = new List<Curve> { Line.CreateBound(s.P(u0, v, wa), s.P(u0, v, wb)) };
 
             Place(c, name, bt, s.DirU, curves, Mm(f.SpacingMm), span, Layout.Array, true);
@@ -196,6 +230,8 @@ namespace RetainingWallRebar
         // =================================================================
         // Reparto horizontal del alzado. El alzado va en talud, asi que o bien
         // se coloca barra a barra (exacto) o por bandas (menos elementos).
+        // En un esquinero la barra gira la esquina con una pata de solape sobre
+        // la linea de barra de la otra ala (CornerFace).
         // =================================================================
         private static void StemHorizontals(Ctx c, bool back)
         {
@@ -203,7 +239,7 @@ namespace RetainingWallRebar
             AppConfig cfg = c.Cfg;
             BarFamilyCfg f = back ? cfg.StemHorizontalBack : cfg.StemHorizontalFront;
             if (!f.Enabled) return;
-            string name = "horizontal alzado " + (back ? "trasdos" : "intrados");
+            string name = c.Plan.Label + "horizontal alzado " + (back ? "trasdos" : "intrados");
 
             RebarBarType bt = FindBarType(c.Doc, f.BarTypeName);
             double db = bt.BarNominalDiameter;
@@ -213,22 +249,38 @@ namespace RetainingWallRebar
             bool useU0 = back ? s.HeelAtU0 : !s.HeelAtU0;
             Func<double, double> face = useU0 ? (Func<double, double>)s.FaceU0 : s.FaceU1;
             double sign = useU0 ? +1 : -1;
+            CornerFace corner = useU0 ? c.Plan.CornerU0 : c.Plan.CornerU1;
 
             double spacing = Mm(f.SpacingMm);
-            double vStart = s.FootingTop + spacing * 0.5;
+            double shift = c.Plan.ShiftHorizontals ? db : 0;
+            double vStart = s.FootingTop + spacing * 0.5 + shift;
             double vEnd = s.LenV - Mm(cfg.CoverStemTopMm) - db;
             if (vEnd <= vStart) return;
 
-            double wa = Mm(cfg.CoverEndMm);
-            double wb = s.LenW - wa;
+            double wa = c.Plan.HorW0;
             double band = Mm(cfg.StemHorizontalBandMm);
 
+            // Barra a la altura v (o a la altura media de su banda): tramo recto desde el
+            // extremo libre y, si hay esquina en esta cara, pata sobre la otra ala.
+            List<Curve> BarAt(double v)
+            {
+                double u = face(v) + sign * (cov + db * 0.5);
+                double wEnd = corner != null ? corner.OtherBarW(v) : c.Plan.HorW1;
+                if (wEnd - wa <= MinSeg) return null;
+                var cl = new List<Curve> { Line.CreateBound(s.P(u, v, wa), s.P(u, v, wEnd)) };
+                if (corner != null && corner.Lap > MinSeg)
+                    cl.Add(Line.CreateBound(s.P(u, v, wEnd), s.P(u + corner.LegDirU * corner.Lap, v, wEnd)));
+                return cl;
+            }
+
+            bool any = false;
             if (band <= MinSeg)
             {
                 for (double v = vStart; v <= vEnd; v += spacing)
                 {
-                    double u = face(v) + sign * (cov + db * 0.5);
-                    var cl = new List<Curve> { Line.CreateBound(s.P(u, v, wa), s.P(u, v, wb)) };
+                    List<Curve> cl = BarAt(v);
+                    if (cl == null) continue;
+                    any = true;
                     Place(c, name + " v=" + ToMm(v) + " mm", bt, s.DirV, cl, 0, 0, Layout.Single, true);
                 }
             }
@@ -238,11 +290,16 @@ namespace RetainingWallRebar
                 {
                     double vHi = Math.Min(v + band, vEnd);
                     double vMid = (v + vHi) * 0.5;
-                    double u = face(vMid) + sign * (cov + db * 0.5);
-                    var cl = new List<Curve> { Line.CreateBound(s.P(u, v, wa), s.P(u, v, wb)) };
+                    List<Curve> cl = BarAt(vMid);
+                    if (cl == null) continue;
+                    any = true;
+                    // la barra de definicion va en la base de la banda: se desplaza desde vMid
+                    Transform down = Transform.CreateTranslation(s.DirV * (v - vMid));
+                    cl = cl.Select(cv => cv.CreateTransformed(down)).ToList();
                     Place(c, name + " banda v=" + ToMm(v) + " mm", bt, s.DirV, cl, spacing, vHi - v, Layout.Array, false);
                 }
             }
+            if (!any) c.Result.Failed.Add(name + ": no cabe en el tramo");
         }
 
         // =================================================================
@@ -439,8 +496,7 @@ namespace RetainingWallRebar
 
         public static RebarBarType FindBarType(Document doc, string name)
         {
-            var all = new FilteredElementCollector(doc)
-                .OfClass(typeof(RebarBarType)).Cast<RebarBarType>().ToList();
+            var all = AllBarTypes(doc);
             if (all.Count == 0)
                 throw new InvalidOperationException(
                     "El proyecto no tiene ningun tipo de barra (RebarBarType). Carga una familia de armadura primero.");
@@ -453,6 +509,15 @@ namespace RetainingWallRebar
                 if (partial != null) return partial;
             }
             return all[0];
+        }
+
+        /// <summary>Tipos de barra del proyecto, ordenados por nombre (para la interfaz).</summary>
+        public static List<RebarBarType> AllBarTypes(Document doc)
+        {
+            return new FilteredElementCollector(doc)
+                .OfClass(typeof(RebarBarType)).Cast<RebarBarType>()
+                .OrderBy(b => b.Name, StringComparer.OrdinalIgnoreCase)
+                .ToList();
         }
 
         private static string PartitionName(Document doc, Element host)

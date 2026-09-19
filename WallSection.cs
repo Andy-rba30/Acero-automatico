@@ -14,12 +14,16 @@ namespace RetainingWallRebar
     /// de modo que todas las coordenadas locales van de 0 a Len*.
     /// Todas las magnitudes en pies (unidades internas de Revit).
     ///
-    /// REQUISITO: el solido tiene que ser un PRISMA RECTO a lo largo de DirW, es decir,
-    /// la misma seccion (u,v) en todo el recorrido. Todo lo demas (leer la seccion en
-    /// la rebanada central, extender los arrays por LenW, usar LenU como ancho de
-    /// zapata) da eso por hecho. Probe lo comprueba ANTES de leer nada mas y rechaza
-    /// el elemento entero si no se cumple: un esquinero en L, un contrafuerte o un
-    /// extremo a inglete acabarian con barras fuera del hormigon.
+    /// REQUISITO: el solido tiene que ser un PRISMA RECTO a lo largo de DirW en todo el
+    /// tramo [0, LenW], es decir, la misma seccion (u,v) en todo el recorrido. Todo lo
+    /// demas (leer la seccion en la rebanada central, extender los arrays por LenW, usar
+    /// LenU como ancho de zapata) da eso por hecho. Probe lo comprueba ANTES de leer nada
+    /// mas y rechaza el elemento entero si no se cumple.
+    ///
+    /// Para un muro esquinero en L, cada ala se describe con una WallSection propia cuyo
+    /// tramo [0, LenW] es solo el tramo recto del ala (desde el extremo libre hasta la
+    /// cara de la zapata de la otra ala); el bloque de esquina queda en w > LenW y lo
+    /// describen BlockLen y StemReach. Ver CornerWall.
     /// </summary>
     public class WallSection
     {
@@ -32,10 +36,28 @@ namespace RetainingWallRebar
         /// <summary>Caras del alzado en arranque (v = FootingTop) y en coronacion (v = LenV).</summary>
         public double StemU0Bot, StemU1Bot, StemU0Top, StemU1Top;
 
+        /// <summary>Solido completo del anfitrion (en un esquinero, la L entera).</summary>
         public Solid HostSolid;
+
+        // --- solo para alas de un muro esquinero (0 / LenW / 0 en un tramo recto) ---
+
+        /// <summary>Longitud del bloque de esquina a continuacion del tramo recto (w de LenW a LenW+BlockLen).</summary>
+        public double BlockLen;
+
+        /// <summary>Hasta que w (medido desde el extremo libre) hay hormigon de alzado de este ala dentro del bloque.</summary>
+        public double StemReach;
+
+        /// <summary>+1 si el tramo recto de la otra ala esta en u > LenU, -1 si esta en u &lt; 0.</summary>
+        public double OtherSideU;
+
+        /// <summary>Etiqueta para mensajes y nombres de conjuntos ("" en un tramo recto, "ala 1" / "ala 2").</summary>
+        public string Label = "";
 
         /// <summary>Motivo del ultimo fallo de Probe, para poder diagnosticar desde el dialogo.</summary>
         public static string LastError;
+
+        /// <summary>True si el ultimo Probe fallo porque el solido no es un prisma recto.</summary>
+        public static bool LastNotPrism;
 
         public XYZ P(double u, double v, double w) => Origin + DirU * u + DirV * v + DirW * w;
 
@@ -85,32 +107,54 @@ namespace RetainingWallRebar
         public string Describe()
         {
             double mm(double ft) => UnitUtils.ConvertFromInternalUnits(ft, UnitTypeId.Millimeters);
-            return $"B={mm(LenU):0} H={mm(LenV):0} L={mm(LenW):0} " +
-                   $"canto zap={mm(FootingTop):0} " +
-                   $"alzado {mm(StemU1Bot - StemU0Bot):0}->{mm(StemU1Top - StemU0Top):0}";
+            string s = $"B={mm(LenU):0} H={mm(LenV):0} L={mm(LenW):0} " +
+                       $"canto zap={mm(FootingTop):0} " +
+                       $"alzado {mm(StemU1Bot - StemU0Bot):0}->{mm(StemU1Top - StemU0Top):0}";
+            if (BlockLen > 0) s += $" bloque esquina={mm(BlockLen):0}";
+            return s;
         }
 
         // ------------------------------------------------------------------
+        /// <summary>
+        /// Lee la seccion de un tramo recto. Devuelve null (con LastError) si el elemento
+        /// no tiene un unico solido o si no es un prisma recto (LastNotPrism = true).
+        /// </summary>
         public static WallSection Probe(Document doc, Element host, AppConfig cfg)
         {
             LastError = null;
+            LastNotPrism = false;
 
+            Solid solid = SingleSolid(host, out string err);
+            if (solid == null) { LastError = err; return null; }
+            return ProbeSolid(doc, host, solid, cfg);
+        }
+
+        /// <summary>
+        /// Unico solido significativo del elemento. Si la familia tiene varias extrusiones
+        /// sin unir, solo se veria la mayor y se armaria un trozo del muro creyendo que es
+        /// el muro entero: se rechaza.
+        /// </summary>
+        public static Solid SingleSolid(Element host, out string err)
+        {
+            err = null;
             List<Solid> solids = Solids(host);
             if (solids.Count == 0)
-            { LastError = "no se encontro solido en el elemento"; return null; }
+            { err = "no se encontro solido en el elemento"; return null; }
 
-            // Si la familia tiene varias extrusiones sin unir, solo se veria la mayor y
-            // se armaria un trozo del muro creyendo que es el muro entero. Se rechaza.
             Solid solid = solids[0];
             int significant = solids.Count(x => x.Volume > solid.Volume * 0.001);
             if (significant > 1)
             {
-                LastError = "RECHAZADO, el elemento tiene " + significant + " solidos independientes y el plugin " +
-                            "solo sabe leer uno; une las extrusiones en la familia (Unir geometria) o revisa el elemento. " +
-                            "No se ha creado ninguna barra.";
+                err = "RECHAZADO, el elemento tiene " + significant + " solidos independientes y el plugin " +
+                      "solo sabe leer uno; une las extrusiones en la familia (Unir geometria) o revisa el elemento. " +
+                      "No se ha creado ninguna barra.";
                 return null;
             }
+            return solid;
+        }
 
+        internal static WallSection ProbeSolid(Document doc, Element host, Solid solid, AppConfig cfg)
+        {
             List<XYZ> pts = Vertices(solid);
             if (pts.Count < 4)
             { LastError = "el solido no tiene aristas legibles"; return null; }
@@ -137,6 +181,7 @@ namespace RetainingWallRebar
                 LenW = w1 - w0,
                 HostSolid = solid
             };
+            s.StemReach = s.LenW;
 
             // --- SEGURIDAD PRIMERO: el solido tiene que ser un prisma recto ---
             // Se comprueba antes de leer canto, caras o nada mas. Si la seccion no es
@@ -144,18 +189,29 @@ namespace RetainingWallRebar
             // cualquier barra que se generase podria quedar en el aire (hueco de una L).
             if (!IsRightPrism(s, cfg, out string why))
             {
-                LastError = "RECHAZADO, el solido no es un prisma recto (la seccion no es constante a lo largo del eje): " +
-                            why + ". Los muros esquineros en L, los contrafuertes, los escalones y los extremos a " +
-                            "inglete no estan soportados (ver README). No se ha creado ninguna barra.";
+                LastNotPrism = true;
+                LastError = "el solido no es un prisma recto (la seccion no es constante a lo largo del eje): " + why;
                 return null;
             }
 
+            if (!ReadSection(s, cfg, ov, out string err))
+            { LastError = err; return null; }
+            return s;
+        }
+
+        /// <summary>
+        /// Lee canto de zapata y caras del alzado en la rebanada central del tramo [0, LenW].
+        /// Requiere que el tramo sea un prisma recto (comprobado antes por quien llama).
+        /// </summary>
+        internal static bool ReadSection(WallSection s, AppConfig cfg, SectionOverride ov, out string err)
+        {
+            err = null;
             double slice = Mm(cfg.ProbeSliceMm);
             double wMid = s.LenW * 0.5;
             double wa = Math.Max(0, wMid - slice), wb = Math.Min(s.LenW, wMid + slice);
 
             // --- canto de zapata ---
-            if (ov.FootingThicknessMm > 0)
+            if (ov != null && ov.FootingThicknessMm > 0)
             {
                 s.FootingTop = Mm(ov.FootingThicknessMm);
             }
@@ -167,25 +223,25 @@ namespace RetainingWallRebar
                 if (tA.HasValue) vals.Add(tA.Value);
                 if (tB.HasValue) vals.Add(tB.Value);
                 if (vals.Count == 0)
-                { LastError = Dump(s) + " las rebanadas laterales salieron vacias"; return null; }
+                { err = Dump(s) + " las rebanadas laterales salieron vacias"; return false; }
                 // el vuelo libre de zapata da el canto; el lado donde arranca el alzado da la altura total
                 s.FootingTop = vals.Min();
             }
             if (s.FootingTop <= 0 || s.FootingTop >= s.LenV)
             {
-                LastError = Dump(s) + " canto de zapata incoherente (" + Round(s.FootingTop) + " mm)";
-                return null;
+                err = Dump(s) + " canto de zapata incoherente (" + Round(s.FootingTop) + " mm)";
+                return false;
             }
 
             // --- caras del alzado en arranque y coronacion ---
             var bot = StemExtentsAt(s, s.FootingTop + slice * 0.5, slice, wa, wb);
             var top = StemExtentsAt(s, s.LenV - slice * 1.5, slice, wa, wb);
             if (bot == null || top == null)
-            { LastError = Dump(s) + " no se leyeron las caras del alzado"; return null; }
+            { err = Dump(s) + " no se leyeron las caras del alzado"; return false; }
 
             s.StemU0Bot = bot.Item1; s.StemU1Bot = bot.Item2;
             s.StemU0Top = top.Item1; s.StemU1Top = top.Item2;
-            return s;
+            return true;
         }
 
         // ==================================================================
@@ -209,16 +265,28 @@ namespace RetainingWallRebar
         /// </summary>
         private static bool IsRightPrism(WallSection s, AppConfig cfg, out string why)
         {
-            double tol = Mm(cfg.PrismCheckToleranceMm);
-            if (tol <= 0) tol = Mm(2);
-
+            double tol = Tol(cfg);
             if (!SectionIsConstant(s, cfg, tol, out why)) return false;
             if (!FacesAreParallelOrEndCaps(s, tol, out why)) return false;
             return true;
         }
 
+        internal static double Tol(AppConfig cfg)
+        {
+            double tol = Mm(cfg.PrismCheckToleranceMm);
+            return tol <= 0 ? Mm(2) : tol;
+        }
+
+        internal static double Step(AppConfig cfg)
+        {
+            double step = Mm(cfg.PrismCheckStepMm);
+            return step <= 0 ? Mm(250) : step;
+        }
+
+        internal static double HalfSlice(AppConfig cfg) => Math.Max(Mm(cfg.ProbeSliceMm), Mm(2)) * 0.5;
+
         /// <summary>Seccion (u,v) del solido en una estacion w del recorrido.</summary>
-        private sealed class SectionSample
+        internal sealed class SectionSample
         {
             public double W;
             /// <summary>Area de la seccion y area de cada una de las dos tapas de la rebanada.</summary>
@@ -233,15 +301,17 @@ namespace RetainingWallRebar
                 UnitUtils.ConvertFromInternalUnits(Area, UnitTypeId.SquareMeters).ToString("0.000") + " m2";
         }
 
-        private static bool SectionIsConstant(WallSection s, AppConfig cfg, double tol, out string why)
+        internal static double AreaTol(WallSection s, SectionSample r, double tol) =>
+            Math.Max(0.01 * r.Area, tol * 2 * (s.LenU + s.LenV));
+
+        internal static bool SectionIsConstant(WallSection s, AppConfig cfg, double tol, out string why)
         {
             why = null;
 
-            double step = Mm(cfg.PrismCheckStepMm);
-            if (step <= 0) step = Mm(250);
+            double step = Step(cfg);
             int n = (int)Math.Ceiling(s.LenW / step);
             n = Math.Max(5, Math.Min(n, 500));
-            double half = Math.Max(Mm(cfg.ProbeSliceMm), Mm(2)) * 0.5;
+            double half = HalfSlice(cfg);
 
             // estaciones interiores equiespaciadas; nunca sobre las propias tapas
             var samples = new SectionSample[n];
@@ -255,7 +325,7 @@ namespace RetainingWallRebar
 
             // referencia: la seccion central, que es la que despues se usa para armar
             SectionSample r = samples[n / 2];
-            double areaTol = Math.Max(0.01 * r.Area, tol * 2 * (s.LenU + s.LenV));
+            double areaTol = AreaTol(s, r, tol);
 
             var bad = new List<string>();
             for (int i = 0; i < n; i++)
@@ -271,7 +341,7 @@ namespace RetainingWallRebar
             return false;
         }
 
-        private static SectionSample SampleSection(WallSection s, double w, double half)
+        internal static SectionSample SampleSection(WallSection s, double w, double half)
         {
             Solid slab = Intersect(s, -1, s.LenU + 1, -1, s.LenV + 1, w - half, w + half);
             if (slab == null) return null;
@@ -323,7 +393,7 @@ namespace RetainingWallRebar
         /// contorno, y no vertice contra vertice, evita falsos rechazos cuando la operacion
         /// booleana parte una arista en dos en una estacion y no en otra.
         /// </summary>
-        private static bool SameProfile(SectionSample r, SectionSample s, double tol, double areaTol, out string diff)
+        internal static bool SameProfile(SectionSample r, SectionSample s, double tol, double areaTol, out string diff)
         {
             diff = null;
             if (s.AreaA > 0 && s.AreaB > 0 && Math.Abs(s.AreaA - s.AreaB) > areaTol)
@@ -455,7 +525,8 @@ namespace RetainingWallRebar
                                 pts.Max(p => p.DotProduct(s.DirU)) - o);
         }
 
-        private static Solid Intersect(WallSection s, double ua, double ub, double va, double vb, double wa, double wb)
+        /// <summary>Interseccion del solido del anfitrion con una caja en coordenadas locales; null si vacia.</summary>
+        internal static Solid Intersect(WallSection s, double ua, double ub, double va, double vb, double wa, double wb)
         {
             try
             {
@@ -536,7 +607,20 @@ namespace RetainingWallRebar
             return ov.FlipAxis ? best.Negate() : best;
         }
 
-        private static XYZ Flat(XYZ v)
+        /// <summary>Ejes X e Y horizontales de la familia (o del proyecto si el elemento no es una instancia).</summary>
+        internal static XYZ[] PlanAxes(Element host)
+        {
+            if (host is FamilyInstance fi)
+            {
+                Transform t = fi.GetTransform();
+                XYZ x = Flat(t.BasisX), y = Flat(t.BasisY);
+                if (x != null && y != null && Math.Abs(x.DotProduct(y)) < 1e-6) return new[] { x, y };
+                if (x != null) return new[] { x, XYZ.BasisZ.CrossProduct(x).Normalize() };
+            }
+            return new[] { XYZ.BasisX, XYZ.BasisY };
+        }
+
+        internal static XYZ Flat(XYZ v)
         {
             XYZ f = new XYZ(v.X, v.Y, 0);
             return f.GetLength() < 1e-6 ? null : f.Normalize();
@@ -564,7 +648,7 @@ namespace RetainingWallRebar
 
         public static Solid LargestSolid(Element e) => Solids(e).FirstOrDefault();
 
-        private static List<XYZ> Vertices(Solid s)
+        internal static List<XYZ> Vertices(Solid s)
         {
             var pts = new List<XYZ>();
             foreach (Edge ed in s.Edges)
@@ -572,7 +656,7 @@ namespace RetainingWallRebar
             return pts;
         }
 
-        private static string TypeNameOf(Document doc, Element e)
+        internal static string TypeNameOf(Document doc, Element e)
         {
             ElementId tid = e.GetTypeId();
             Element t = (tid != null && tid != ElementId.InvalidElementId) ? doc.GetElement(tid) : null;
