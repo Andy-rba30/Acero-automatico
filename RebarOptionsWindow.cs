@@ -578,10 +578,11 @@ namespace RetainingWallRebar
                 grid.Children.Add(h);
             }
 
-            AddFamily(grid, "Vertical trasdos (alzado)", c => c.StemVerticalBack, leg: true, cut: true, legHint: "patilla en zapata");
-            AddFamily(grid, "Vertical intrados (alzado)", c => c.StemVerticalFront, leg: true, cut: true, legHint: "patilla en zapata");
-            AddFamily(grid, "Transversal inferior (zapata)", c => c.FootingTransverseBottom, leg: true, cut: false, legHint: "pata vertical en extremos");
-            AddFamily(grid, "Transversal superior (zapata)", c => c.FootingTransverseTop, leg: true, cut: false, legHint: "pata vertical en extremos");
+            string legV = "Patilla en zapata: cruza bajo la pantalla hacia el lado contrario y sobresale esta longitud de la cara opuesta del alzado";
+            AddFamily(grid, "Vertical trasdos (alzado)", c => c.StemVerticalBack, leg: true, cut: true, legHint: legV);
+            AddFamily(grid, "Vertical intrados (alzado)", c => c.StemVerticalFront, leg: true, cut: true, legHint: legV);
+            AddFamily(grid, "Transversal inferior (zapata)", c => c.FootingTransverseBottom, leg: true, cut: false, legHint: "Pata vertical en los extremos (hacia arriba)");
+            AddFamily(grid, "Transversal superior (zapata)", c => c.FootingTransverseTop, leg: true, cut: false, legHint: "Pata vertical en los extremos (hacia abajo, por dentro de las de la inferior)");
             AddFamily(grid, "Longitudinal inferior (zapata)", c => c.FootingLongitudinalBottom, leg: false, cut: false, legHint: null);
             AddFamily(grid, "Longitudinal superior (zapata)", c => c.FootingLongitudinalTop, leg: false, cut: false, legHint: null);
 
@@ -590,7 +591,9 @@ namespace RetainingWallRebar
             panel.Children.Add(new TextBlock
             {
                 Text = "Trasdos = cara del talon (vuelo mayor de zapata). El tipo de barra se busca por nombre exacto o " +
-                       "parcial entre los tipos cargados en el proyecto. Baston > 0 corta las verticales a esa altura sobre la zapata.",
+                       "parcial entre los tipos cargados en el proyecto. Baston > 0 corta las verticales a esa altura sobre la zapata. " +
+                       "La patilla de las verticales se apoya sobre la parrilla inferior, cruza bajo la pantalla y sobresale la " +
+                       "longitud indicada de la cara opuesta; la del intrados va apilada sobre la del trasdos.",
                 TextWrapping = TextWrapping.Wrap,
                 Foreground = Brushes.DimGray,
                 Margin = new Thickness(4, 6, 4, 0)

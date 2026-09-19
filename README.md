@@ -217,12 +217,15 @@ posición en coordenadas locales del muro (del ala, en un esquinero).
 
 | Familia | Colocación |
 |---|---|
-| Vertical trasdós | sigue la cara inclinada, baja hasta el fondo de zapata y gira la patilla |
-| Vertical intradós | ídem, patilla en sentido contrario |
+| Vertical trasdós | sigue la cara inclinada, se apoya sobre la parrilla inferior y su patilla cruza bajo la pantalla hasta sobresalir `legMm` de la cara opuesta |
+| Vertical intradós | ídem en sentido contrario, con la patilla apilada un diámetro sobre la del trasdós |
 | Reparto horizontal alzado ×2 caras | por tramos de altura (1 a 3), barra a barra (exacto con el talud) o por bandas; en L con pata en la esquina |
-| Transversal inferior de zapata | con patas verticales en los extremos |
-| Transversal superior de zapata | ídem |
-| Reparto longitudinal de zapata ×2 capas | una barra definida + array en el ancho |
+| Transversal inferior de zapata | capa exterior, con patas verticales hacia arriba en los extremos |
+| Transversal superior de zapata | ídem hacia abajo, con las patas por dentro de las de la inferior |
+| Reparto longitudinal de zapata ×2 capas | por dentro del transversal y de sus patas; una barra definida + array en el ancho |
+
+La geometría en sección de estas familias está en `SectionBars`, que usan tanto
+el generador como el esquema de la ventana.
 
 Las transversales y verticales se crean como **un solo elemento `Rebar` con array**
 a lo largo del tramo, así que el despiece queda limpio. En un esquinero cada ala
@@ -261,7 +264,9 @@ Requisitos previos en el modelo:
   respetando el talud exactamente (≈35 elementos por cara en un muro de 7 m).
   Un valor como `1000` los agrupa en arrays por bandas: muchos menos elementos,
   a costa de un pequeño desvío respecto a la cara dentro de cada banda.
-- `legMm` en las verticales es la longitud de la patilla en zapata (los 900 del plano).
+- `legMm` en las verticales es lo que la patilla sobresale de la cara opuesta del
+  alzado tras cruzar bajo la pantalla (los 900 del plano). En las transversales
+  es la longitud de las patas verticales de los extremos.
 - `cutLengthMm` > 0 convierte esa familia en bastón cortado a esa altura sobre
   la cara superior de zapata.
 - `cornerThroughWing`: `"auto"` (ala de tramo recto más largo), `"1"` o `"2"`.
