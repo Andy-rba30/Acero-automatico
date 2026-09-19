@@ -101,6 +101,9 @@ namespace RetainingWallRebar
             // cara superior de zapata
             Children.Add(Label("zapata", 4, Y(_s.FootingTop) - 8, Brushes.DimGray, 10));
 
+            // --- verticales del alzado y armado de zapata (en gris, como en una seccion) ---
+            DrawFixedFamilies(k, X, Y);
+
             if (_layout == null || _layout.Zones.Count == 0)
             {
                 Children.Add(Label(_layout?.Error ?? "sin tramos", 8, 4, Brushes.Firebrick, 11));
@@ -181,6 +184,103 @@ namespace RetainingWallRebar
 
             if (_layout.Error != null)
                 Children.Add(Label(_layout.Error, 8, 4, Brushes.Firebrick, 11));
+        }
+
+        private static readonly Brush BarBrush = new SolidColorBrush(Color.FromRgb(0x50, 0x50, 0x50));
+
+        /// <summary>
+        /// Verticales (linea por cara con su patilla), transversales de zapata (linea con
+        /// patas) y longitudinales de zapata (puntos). Misma geometria que RebarGenerator.
+        /// </summary>
+        private void DrawFixedFamilies(double k, Func<double, double> X, Func<double, double> Y)
+        {
+            double covSide = WallSection.Mm(_cfg.CoverFootingSideMm);
+            double covBot = WallSection.Mm(_cfg.CoverFootingBottomMm);
+            double covTop = WallSection.Mm(_cfg.CoverFootingTopMm);
+            double covStem = WallSection.Mm(_cfg.CoverStemMm);
+            double covCrown = WallSection.Mm(_cfg.CoverStemTopMm);
+
+            // verticales
+            for (int f = 0; f < 2; f++)
+            {
+                bool back = f == 0;
+                BarFamilyCfg fam = back ? _cfg.StemVerticalBack : _cfg.StemVerticalFront;
+                if (!fam.Enabled) continue;
+                double db = _diameterFt(fam.BarTypeName);
+                bool useU0 = back ? _s.HeelAtU0 : !_s.HeelAtU0;
+                double sign = useU0 ? +1 : -1;
+                double uAt(double v) => (useU0 ? _s.FaceU0(v) : _s.FaceU1(v)) + sign * (covStem + db * 0.5);
+                double vTop = _s.LenV - covCrown - db * 0.5;
+                double vBot = covBot + db * 0.5;
+                if (fam.CutLengthMm > 0) vTop = Math.Min(vTop, _s.FootingTop + WallSection.Mm(fam.CutLengthMm));
+                double uEnd = uAt(vBot) - sign * WallSection.Mm(fam.LegMm);
+                uEnd = Math.Min(Math.Max(uEnd, covSide + db), _s.LenU - covSide - db);
+                var pts = new List<Point> { new Point(X(uAt(vTop)), Y(vTop)), new Point(X(uAt(vBot)), Y(vBot)), new Point(X(uEnd), Y(vBot)) };
+                Children.Add(Bar(pts, db * k, "Vertical " + (back ? "trasdos" : "intrados") + ": " + fam.BarTypeName +
+                                 " @" + fam.SpacingMm.ToString("0") + " mm, patilla " + fam.LegMm.ToString("0") + " mm"));
+            }
+
+            // transversales y longitudinales de zapata
+            for (int t = 0; t < 2; t++)
+            {
+                bool top = t == 1;
+                BarFamilyCfg tr = top ? _cfg.FootingTransverseTop : _cfg.FootingTransverseBottom;
+                BarFamilyCfg lg = top ? _cfg.FootingLongitudinalTop : _cfg.FootingLongitudinalBottom;
+                double dbT = _diameterFt(tr.BarTypeName);
+                if (tr.Enabled)
+                {
+                    double v = top ? _s.FootingTop - covTop - dbT * 0.5 : covBot + dbT * 0.5;
+                    double ua = covSide + dbT * 0.5, ub = _s.LenU - ua;
+                    double vLeg = v + (top ? -1 : +1) * WallSection.Mm(tr.LegMm);
+                    vLeg = Math.Min(Math.Max(vLeg, covBot), _s.FootingTop - covTop);
+                    var pts = new List<Point>();
+                    if (tr.LegMm > 0) pts.Add(new Point(X(ua), Y(vLeg)));
+                    pts.Add(new Point(X(ua), Y(v)));
+                    pts.Add(new Point(X(ub), Y(v)));
+                    if (tr.LegMm > 0) pts.Add(new Point(X(ub), Y(vLeg)));
+                    Children.Add(Bar(pts, dbT * k, "Transversal zapata " + (top ? "superior" : "inferior") + ": " + tr.BarTypeName +
+                                     " @" + tr.SpacingMm.ToString("0") + " mm"));
+                }
+                if (lg.Enabled)
+                {
+                    double db = _diameterFt(lg.BarTypeName);
+                    double v = top ? _s.FootingTop - covTop - dbT - db * 0.5 : covBot + dbT + db * 0.5;
+                    double u0 = covSide + db * 0.5;
+                    double span = _s.LenU - 2 * u0;
+                    double spacing = WallSection.Mm(lg.SpacingMm);
+                    if (span <= 0 || spacing <= 0) continue;
+                    int n = (int)Math.Ceiling(span / spacing - 1e-9) + 1;
+                    double r = Math.Max(db * 0.5 * k, 2);
+                    for (int i = 0; i < n; i++)
+                    {
+                        double u = u0 + (n > 1 ? span * i / (n - 1) : 0);
+                        var dot = new Ellipse
+                        {
+                            Width = 2 * r, Height = 2 * r, Fill = BarBrush,
+                            ToolTip = "Longitudinal zapata " + (top ? "superior" : "inferior") + ": " + lg.BarTypeName +
+                                      " @" + lg.SpacingMm.ToString("0") + " mm (" + n + " barras)"
+                        };
+                        SetLeft(dot, X(u) - r);
+                        SetTop(dot, Y(v) - r);
+                        Children.Add(dot);
+                    }
+                }
+            }
+        }
+
+        private static Polyline Bar(List<Point> pts, double thicknessPx, string tip)
+        {
+            var pl = new Polyline
+            {
+                Stroke = BarBrush,
+                StrokeThickness = Math.Max(thicknessPx, 1.5),
+                StrokeLineJoin = PenLineJoin.Round,
+                StrokeStartLineCap = PenLineCap.Round,
+                StrokeEndLineCap = PenLineCap.Round,
+                ToolTip = tip
+            };
+            foreach (Point p in pts) pl.Points.Add(p);
+            return pl;
         }
 
         private static TextBlock Label(string text, double x, double y, Brush brush, double size, bool bold = false)

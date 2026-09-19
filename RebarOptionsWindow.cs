@@ -649,6 +649,13 @@ namespace RetainingWallRebar
             row.Enabled.Unchecked += sync;
             sync(null, null);
 
+            // el esquema dibuja tambien verticales y zapata: se redibuja con cualquier cambio
+            row.Enabled.Checked += (s, e) => Refresh();
+            row.Enabled.Unchecked += (s, e) => Refresh();
+            row.Spacing.TextChanged += (s, e) => Refresh();
+            row.Leg.TextChanged += (s, e) => Refresh();
+            row.Cut.TextChanged += (s, e) => Refresh();
+
             _rows.Add(row);
         }
 
@@ -665,8 +672,8 @@ namespace RetainingWallRebar
             _covFootBot = AddLabeled(grid, "Zapata, cara inferior", _cfg.CoverFootingBottomMm);
             _covFootSide = AddLabeled(grid, "Zapata, laterales", _cfg.CoverFootingSideMm);
             _covEnd = AddLabeled(grid, "Extremos del tramo", _cfg.CoverEndMm);
-            _covStem.TextChanged += (s, e) => Refresh();
-            _covStemTop.TextChanged += (s, e) => Refresh();
+            foreach (TextBox tb in new[] { _covStem, _covStemTop, _covFootTop, _covFootBot, _covFootSide })
+                tb.TextChanged += (s, e) => Refresh();
             group.Content = grid;
             return group;
         }
@@ -689,8 +696,10 @@ namespace RetainingWallRebar
             _through.Items.Add("Ala 1 (eje X de la familia)");
             _through.Items.Add("Ala 2 (eje Y de la familia)");
             _through.SelectedIndex = _cfg.CornerThroughWingIndex + 1;
-            _through.ToolTip = "El ala pasante lleva sus verticales hasta la cara exterior del alzado de la otra ala y su malla de " +
-                               "zapata atraviesa el bloque de esquina. Se puede cambiar elemento a elemento en la lista de arriba.";
+            _through.ToolTip = "En un esquinero las dos alas se solapan en la esquina y una de ellas manda en ese trozo comun: " +
+                               "la pasante lleva sus verticales hasta la cara exterior del alzado de la otra ala (ocupa la columna de " +
+                               "esquina) y su malla de zapata atraviesa el bloque de esquina; la otra ala para justo antes. " +
+                               "Los horizontales de las dos alas giran la esquina igual. Se puede cambiar elemento a elemento en la lista de arriba.";
             AddControl(grid, "Ala pasante por defecto", _through);
 
             var lap = new StackPanel { Orientation = Orientation.Horizontal };
@@ -703,16 +712,22 @@ namespace RetainingWallRebar
             AddControl(grid, "Pata de solape de los horizontales en la esquina", lap);
 
             _mesh = new ComboBox { Margin = Pad, HorizontalAlignment = HorizontalAlignment.Stretch };
-            _mesh.Items.Add("Malla completa del ala pasante (la otra ala para en la cara del bloque)");
-            _mesh.Items.Add("Transversales de las dos alas cruzadas (longitudinales paran en el bloque)");
+            _mesh.Items.Add("Malla del ala pasante");
+            _mesh.Items.Add("Transversales de las dos alas cruzadas");
+            _mesh.ToolTip = "El bloque de esquina es el trozo de zapata donde se cruzan las dos alas.\n" +
+                            "- Malla del ala pasante: ahi va solo la malla (transversales y longitudinales) del ala pasante; " +
+                            "la otra ala para sus barras de zapata en el borde del bloque.\n" +
+                            "- Transversales de las dos alas cruzadas: las transversales de ambas alas atraviesan el bloque en " +
+                            "dos capas distintas; las longitudinales de ambas paran en el borde.";
             _mesh.SelectedIndex = _cfg.CornerFootingMeshBoth ? 1 : 0;
             AddControl(grid, "Malla de zapata en el bloque de esquina", _mesh);
 
             var note = new TextBlock
             {
-                Text = "En la esquina, los horizontales de cada ala giran en L sobre la linea de barra de la otra ala " +
-                       "(exterior con exterior, interior con interior). Cada barra se comprueba contra el solido " +
-                       "completo: si alguna queda fuera del hormigon, el elemento entero se deshace.",
+                Text = "Solo para muros esquineros. En la esquina, los horizontales de cada ala giran en L sobre la linea " +
+                       "de barra de la otra ala (exterior con exterior, interior con interior). Pasa el raton por cada opcion " +
+                       "para ver que hace. Cada barra se comprueba contra el solido completo: si alguna queda fuera del " +
+                       "hormigon, el elemento entero se deshace.",
                 TextWrapping = TextWrapping.Wrap,
                 Foreground = Brushes.DimGray,
                 Margin = new Thickness(4, 6, 4, 0)
