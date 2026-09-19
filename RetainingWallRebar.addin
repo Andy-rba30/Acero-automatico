@@ -3,7 +3,7 @@
   <AddIn Type="Command">
     <Name>Armar muro de contencion</Name>
     <Text>Armar muro de contencion</Text>
-    <Description>Genera el armado de muros de contencion en T y en L a partir de la geometria del elemento.</Description>
+    <Description>Genera el armado de muros de contencion (tramos rectos y esquineros en L) a partir de la geometria del elemento, con una ventana para elegir el armado y los aceros.</Description>
     <Assembly>RetainingWallRebar\RetainingWallRebar.dll</Assembly>
     <FullClassName>RetainingWallRebar.ArmarMuroCommand</FullClassName>
     <ClientId>8f3a1d54-2c6b-4e19-9f77-5b21ac0e4d13</ClientId>

@@ -11,6 +11,11 @@
   "prismCheckStepMm": 250,
   "prismCheckToleranceMm": 2,
 
+  "cornerThroughWing": "auto",
+  "cornerLapDiameters": 40,
+  "cornerLapMinMm": 300,
+  "cornerFootingMesh": "through",
+
   "stemVerticalBack":  { "enabled": true, "barTypeName": "7/8", "spacingMm": 200, "legMm": 900, "cutLengthMm": 0 },
   "stemVerticalFront": { "enabled": true, "barTypeName": "7/8", "spacingMm": 200, "legMm": 900, "cutLengthMm": 0 },
 

@@ -1,9 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Windows.Interop;
 using Autodesk.Revit.Attributes;
 using Autodesk.Revit.DB;
-using Autodesk.Revit.DB.Structure;
 using Autodesk.Revit.UI;
 using Autodesk.Revit.UI.Selection;
 
@@ -36,41 +36,37 @@ namespace RetainingWallRebar
                 return Result.Cancelled;
             }
 
+            List<string> barTypes = RebarGenerator.AllBarTypes(doc).Select(b => b.Name).ToList();
+            if (barTypes.Count == 0)
+            {
+                message = "El proyecto no tiene ningun tipo de barra (RebarBarType). Carga una familia de armadura primero.";
+                return Result.Failed;
+            }
+
+            // --- 1. Analisis geometrico de cada elemento (solo lectura, sin transaccion) ---
+            var items = hosts.Select(h => HostAnalysis.Analyze(doc, h, cfg)).ToList();
+
+            // --- 2. Interfaz: el usuario revisa que se ha detectado y elige armado y aceros ---
+            var win = new RebarOptionsWindow(cfg.Clone(), barTypes, items);
+            try { new WindowInteropHelper(win).Owner = commandData.Application.MainWindowHandle; } catch { }
+            bool? ok = win.ShowDialog();
+            if (ok != true || win.Result == null) return Result.Cancelled;
+            cfg = win.Result;
+
+            // --- 3. Armado ---
             var log = new List<string>();
             int total = 0, armed = 0, rejected = 0;
 
             using (Transaction tx = new Transaction(doc, "Armar muros de contencion"))
             {
                 tx.Start();
-                foreach (Element host in hosts)
+                foreach (HostAnalysis item in items)
                 {
-                    string tag = "[" + host.Id + " " + host.Name + "] ";
-                    WallSection sec;
-                    try
-                    {
-                        RebarHostData hd = RebarHostData.GetRebarHostData(host);
-                        if (hd == null || !hd.IsValidHost())
-                        {
-                            rejected++;
-                            log.Add(tag + "SIN ARMAR -> no admite armadura. Revisa que el material sea hormigon y la familia estructural.");
-                            continue;
-                        }
-
-                        // Probe comprueba PRIMERO que el solido es un prisma recto; si no lo es
-                        // (esquinero en L, contrafuerte, inglete...) devuelve null y aqui no se
-                        // crea ninguna barra para ese elemento.
-                        sec = WallSection.Probe(doc, host, cfg);
-                        if (sec == null)
-                        {
-                            rejected++;
-                            log.Add(tag + "SIN ARMAR -> " + (WallSection.LastError ?? "no se pudo deducir la seccion (motivo desconocido)"));
-                            continue;
-                        }
-                    }
-                    catch (Exception ex)
+                    string tag = item.Tag;
+                    if (!item.CanBuild)
                     {
                         rejected++;
-                        log.Add(tag + "SIN ARMAR -> ERROR: " + ex.Message);
+                        log.Add(tag + "SIN ARMAR -> " + item.Error);
                         continue;
                     }
 
@@ -82,13 +78,16 @@ namespace RetainingWallRebar
                         sub.Start();
                         BuildResult res = null;
                         string error = null;
+                        WallSection verifyWith = item.Straight ?? item.Corner.Wings[0];
                         try
                         {
-                            res = RebarGenerator.Build(doc, host, sec, cfg);
+                            res = item.Straight != null
+                                ? RebarGenerator.Build(doc, item.Host, item.Straight, cfg)
+                                : RebarGenerator.BuildCorner(doc, item.Host, item.Corner, cfg);
                             if (res.Safe && res.Created.Count > 0)
                             {
                                 doc.Regenerate();
-                                RebarGenerator.VerifyCreated(doc, sec, res);
+                                RebarGenerator.VerifyCreated(doc, verifyWith, res);
                             }
                         }
                         catch (Exception ex)
@@ -97,12 +96,13 @@ namespace RetainingWallRebar
                         }
 
                         bool keep = error == null && res != null && res.Safe;
+                        string desc = item.Detail(cfg);
                         if (keep)
                         {
                             sub.Commit();
                             armed++;
                             total += res.Created.Count;
-                            string line = tag + sec.Describe() + "  ->  " + res.Created.Count + " conjuntos";
+                            string line = tag + desc + "  ->  " + res.Created.Count + " conjuntos";
                             if (res.Failed.Count > 0)
                                 line += "  INCOMPLETO, no se pudieron crear: " + string.Join(" | ", res.Failed);
                             log.Add(line);
@@ -114,7 +114,7 @@ namespace RetainingWallRebar
                             if (error != null)
                                 log.Add(tag + "SIN ARMAR -> ERROR: " + error + ". Se ha deshecho todo lo creado para este elemento.");
                             else
-                                log.Add(tag + "SIN ARMAR -> " + sec.Describe() + ": barras fuera del hormigon, se ha deshecho todo el " +
+                                log.Add(tag + "SIN ARMAR -> " + desc + ": barras fuera del hormigon, se ha deshecho todo el " +
                                         "elemento (" + res.Rejected.Count + "): " + string.Join(" | ", res.Rejected));
                         }
                     }
