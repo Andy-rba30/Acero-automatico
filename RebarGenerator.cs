@@ -228,21 +228,21 @@ namespace RetainingWallRebar
         }
 
         // =================================================================
-        // Reparto horizontal del alzado. El alzado va en talud, asi que o bien
-        // se coloca barra a barra (exacto) o por bandas (menos elementos).
-        // En un esquinero la barra gira la esquina con una pata de solape sobre
-        // la linea de barra de la otra ala (CornerFace).
+        // Reparto horizontal del alzado, por tramos de altura (StemZones). El alzado
+        // va en talud, asi que o bien se coloca barra a barra (exacto) o por bandas
+        // (menos elementos). En un esquinero la barra gira la esquina con una pata
+        // de solape sobre la linea de barra de la otra ala (CornerFace).
         // =================================================================
         private static void StemHorizontals(Ctx c, bool back)
         {
             WallSection s = c.S;
             AppConfig cfg = c.Cfg;
-            BarFamilyCfg f = back ? cfg.StemHorizontalBack : cfg.StemHorizontalFront;
-            if (!f.Enabled) return;
+            if (!(back ? cfg.StemHorizontalBackEnabled : cfg.StemHorizontalFrontEnabled)) return;
             string name = c.Plan.Label + "horizontal alzado " + (back ? "trasdos" : "intrados");
 
-            RebarBarType bt = FindBarType(c.Doc, f.BarTypeName);
-            double db = bt.BarNominalDiameter;
+            ZoneLayout layout = c.Plan.Zones ?? StemZones.Resolve(s, cfg, n => FindBarType(c.Doc, n).BarNominalDiameter, c.Plan.ShiftHorizontals);
+            if (layout.Error != null) { c.Result.Failed.Add(name + ": " + layout.Error); return; }
+
             RebarBarType btVert = FindBarType(c.Doc, (back ? cfg.StemVerticalBack : cfg.StemVerticalFront).BarTypeName);
             double cov = Mm(cfg.CoverStemMm) + btVert.BarNominalDiameter;
 
@@ -251,55 +251,59 @@ namespace RetainingWallRebar
             double sign = useU0 ? +1 : -1;
             CornerFace corner = useU0 ? c.Plan.CornerU0 : c.Plan.CornerU1;
 
-            double spacing = Mm(f.SpacingMm);
-            double shift = c.Plan.ShiftHorizontals ? db : 0;
-            double vStart = s.FootingTop + spacing * 0.5 + shift;
-            double vEnd = s.LenV - Mm(cfg.CoverStemTopMm) - db;
-            if (vEnd <= vStart) return;
-
             double wa = c.Plan.HorW0;
             double band = Mm(cfg.StemHorizontalBandMm);
-
-            // Barra a la altura v (o a la altura media de su banda): tramo recto desde el
-            // extremo libre y, si hay esquina en esta cara, pata sobre la otra ala.
-            List<Curve> BarAt(double v)
-            {
-                double u = face(v) + sign * (cov + db * 0.5);
-                double wEnd = corner != null ? corner.OtherBarW(v) : c.Plan.HorW1;
-                if (wEnd - wa <= MinSeg) return null;
-                var cl = new List<Curve> { Line.CreateBound(s.P(u, v, wa), s.P(u, v, wEnd)) };
-                if (corner != null && corner.Lap > MinSeg)
-                    cl.Add(Line.CreateBound(s.P(u, v, wEnd), s.P(u + corner.LegDirU * corner.Lap, v, wEnd)));
-                return cl;
-            }
-
             bool any = false;
-            if (band <= MinSeg)
+
+            foreach (ResolvedZone z in layout.Zones)
             {
-                for (double v = vStart; v <= vEnd; v += spacing)
+                ResolvedFace f = z.Face(back);
+                if (f == null || f.Heights.Count == 0) continue;
+                RebarBarType bt = FindBarType(c.Doc, f.BarTypeName);
+                double db = bt.BarNominalDiameter;
+                string zname = name + (layout.Zones.Count > 1 ? " tramo " + (z.Index + 1) : "");
+
+                // Barra a la altura v (o a la altura media de su banda): tramo recto desde el
+                // extremo libre y, si hay esquina en esta cara, pata sobre la otra ala.
+                List<Curve> BarAt(double v)
                 {
-                    List<Curve> cl = BarAt(v);
-                    if (cl == null) continue;
-                    any = true;
-                    Place(c, name + " v=" + ToMm(v) + " mm", bt, s.DirV, cl, 0, 0, Layout.Single, true);
+                    double u = face(v) + sign * (cov + db * 0.5);
+                    double wEnd = corner != null ? corner.OtherBarW(v) : c.Plan.HorW1;
+                    if (wEnd - wa <= MinSeg) return null;
+                    var cl = new List<Curve> { Line.CreateBound(s.P(u, v, wa), s.P(u, v, wEnd)) };
+                    double lap = corner != null ? corner.LapFor(db) : 0;
+                    if (lap > MinSeg)
+                        cl.Add(Line.CreateBound(s.P(u, v, wEnd), s.P(u + corner.LegDirU * lap, v, wEnd)));
+                    return cl;
+                }
+
+                if (band <= MinSeg)
+                {
+                    foreach (double v in f.Heights)
+                    {
+                        List<Curve> cl = BarAt(v);
+                        if (cl == null) continue;
+                        any = true;
+                        Place(c, zname + " v=" + ToMm(v) + " mm", bt, s.DirV, cl, 0, 0, Layout.Single, true);
+                    }
+                }
+                else
+                {
+                    for (double v = f.VStart; v <= f.VEnd; v += band)
+                    {
+                        double vHi = Math.Min(v + band, f.VEnd);
+                        double vMid = (v + vHi) * 0.5;
+                        List<Curve> cl = BarAt(vMid);
+                        if (cl == null) continue;
+                        any = true;
+                        // la barra de definicion va en la base de la banda: se desplaza desde vMid
+                        Transform down = Transform.CreateTranslation(s.DirV * (v - vMid));
+                        cl = cl.Select(cv => cv.CreateTransformed(down)).ToList();
+                        Place(c, zname + " banda v=" + ToMm(v) + " mm", bt, s.DirV, cl, f.Spacing, vHi - v, Layout.Array, false);
+                    }
                 }
             }
-            else
-            {
-                for (double v = vStart; v <= vEnd; v += band)
-                {
-                    double vHi = Math.Min(v + band, vEnd);
-                    double vMid = (v + vHi) * 0.5;
-                    List<Curve> cl = BarAt(vMid);
-                    if (cl == null) continue;
-                    any = true;
-                    // la barra de definicion va en la base de la banda: se desplaza desde vMid
-                    Transform down = Transform.CreateTranslation(s.DirV * (v - vMid));
-                    cl = cl.Select(cv => cv.CreateTransformed(down)).ToList();
-                    Place(c, name + " banda v=" + ToMm(v) + " mm", bt, s.DirV, cl, spacing, vHi - v, Layout.Array, false);
-                }
-            }
-            if (!any) c.Result.Failed.Add(name + ": no cabe en el tramo");
+            if (!any) c.Result.Failed.Add(name + ": no cabe ninguna barra en el tramo");
         }
 
         // =================================================================
@@ -501,14 +505,22 @@ namespace RetainingWallRebar
                 throw new InvalidOperationException(
                     "El proyecto no tiene ningun tipo de barra (RebarBarType). Carga una familia de armadura primero.");
 
-            if (!string.IsNullOrWhiteSpace(name))
-            {
-                var exact = all.FirstOrDefault(b => string.Equals(b.Name, name, StringComparison.OrdinalIgnoreCase));
-                if (exact != null) return exact;
-                var partial = all.FirstOrDefault(b => b.Name.IndexOf(name, StringComparison.OrdinalIgnoreCase) >= 0);
-                if (partial != null) return partial;
-            }
-            return all[0];
+            string match = MatchName(all.Select(b => b.Name), name);
+            return match != null ? all.First(b => b.Name == match) : all[0];
+        }
+
+        /// <summary>
+        /// Nombre de tipo de barra que corresponde a "name": coincidencia exacta, si no
+        /// parcial (sin distinguir mayusculas); null si no hay ninguna. La ventana usa la
+        /// misma regla para que el preview muestre el diametro que despues se creara.
+        /// </summary>
+        public static string MatchName(IEnumerable<string> names, string name)
+        {
+            if (string.IsNullOrWhiteSpace(name)) return null;
+            var list = names.ToList();
+            string exact = list.FirstOrDefault(n => string.Equals(n, name, StringComparison.OrdinalIgnoreCase));
+            if (exact != null) return exact;
+            return list.FirstOrDefault(n => n.IndexOf(name, StringComparison.OrdinalIgnoreCase) >= 0);
         }
 
         /// <summary>Tipos de barra del proyecto, ordenados por nombre (para la interfaz).</summary>

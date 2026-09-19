@@ -88,6 +88,34 @@ se elige en la ventana, global o elemento a elemento):
   **sólido completo de la L** antes y después de crearlas. Nada puede quedar en el
   hueco interior.
 
+## Horizontales del alzado por tramos de altura
+
+Las barras horizontales del alzado (las que se ven como puntos en la sección)
+se reparten en **1, 2 o 3 tramos de altura**, cada uno con su propio tipo de
+barra y separación, con opción de armado distinto en trasdós e intradós. Las
+verticales no cambian: una sola distribución y diámetro en toda la altura.
+
+- **Reparto automático**: la altura libre del alzado (de la cara superior de la
+  zapata a coronación) se divide en partes iguales (2 tramos = mitades, 3 =
+  tercios).
+- **Reparto editable**: se escribe la cota superior de cada tramo en metros,
+  medida desde la cara superior de la zapata; el último tramo llega siempre a
+  coronación. Las cotas son las mismas para todos los muros seleccionados; un
+  tramo que quede por encima de la coronación de un muro se omite en ese muro
+  (con aviso).
+- Dentro de cada tramo la primera barra va a media separación de su límite
+  inferior y las siguientes cada "separación"; la última del tramo superior
+  respeta el recubrimiento de coronación. Con un solo tramo el reparto es el
+  mismo que en las versiones anteriores.
+- El reparto lo calcula `StemZones.Resolve`, una función sin efectos que usan
+  tanto la ventana (esquema y recuento de barras) como el generador, así lo que
+  se dibuja es lo que se crea. Con `stemHorizontalBandMm` > 0 cada tramo se
+  agrupa en arrays por bandas; en ese caso Revit equiespacia las barras dentro
+  de cada banda y su cota exacta puede diferir unos milímetros del esquema.
+- En los esquineros en L, las patas de solape se calculan barra a barra con el
+  diámetro del tramo en el que está cada una, y el desplazamiento de un
+  diámetro del ala no pasante se aplica igual.
+
 ## Interfaz gráfica
 
 Al lanzar el comando con uno o varios muros seleccionados se abre una ventana:
@@ -95,14 +123,26 @@ Al lanzar el comando con uno o varios muros seleccionados se abre una ventana:
 1. **Elementos seleccionados**: cada uno con su diagnóstico (tramo recto con sus
    medidas, esquinero en L con las medidas de cada ala, o `SIN ARMAR` con el
    motivo). En los esquineros hay un desplegable para elegir el **ala pasante**
-   de ese elemento en concreto.
-2. **Familias de barras**: para cada una de las ocho familias, si está activa, el
-   **tipo de barra** (desplegable con los `RebarBarType` cargados en el proyecto;
-   se puede escribir un nombre parcial), la separación, la patilla/pata donde
-   aplica y la longitud de bastón en las verticales.
-3. **Recubrimientos** y **opciones**: horizontales por bandas, ala pasante por
+   de ese elemento en concreto. Al hacer clic en un elemento, el esquema pasa a
+   mostrar ese muro (en un esquinero, el ala 1).
+2. **Horizontales del alzado por tramos**: modo de reparto (automático o
+   editable), número de tramos (1, 2 o 3), caras activas, "mismo armado en las
+   dos caras" y una tabla con una fila por tramo (el superior en la primera
+   fila, igual que en el esquema): cota superior, altura resultante, tipo de
+   barra y separación por cara, y número de barras por cara. A la derecha, el
+   **esquema** de la sección real del muro marcado: hormigón, una banda de color
+   por tramo, las cotas de los límites y cada barra como un punto a su altura y
+   con su diámetro. Se redibuja con cada cambio; al pasar el ratón por una fila
+   se resalta su tramo, y cada punto muestra su tramo, tipo y cota. Debajo de
+   la tabla aparecen los avisos (tramo sin barras, cota fuera de la altura,
+   cotas no crecientes).
+3. **Verticales del alzado y zapata**: para cada una de las seis familias, si
+   está activa, el **tipo de barra** (desplegable con los `RebarBarType` cargados
+   en el proyecto; se puede escribir un nombre parcial), la separación, la
+   patilla/pata donde aplica y la longitud de bastón en las verticales.
+4. **Recubrimientos** y **opciones**: horizontales por bandas, ala pasante por
    defecto, pata de solape en esquina y malla de zapata en el bloque.
-4. **Armar** crea la armadura con esos valores solo para esta ejecución.
+5. **Armar** crea la armadura con esos valores solo para esta ejecución.
    **Guardar como valores por defecto** los escribe en el `config.json` que está
    junto a la DLL, de modo que la próxima vez la ventana arranque con ellos.
    (Compilar en Debug vuelve a copiar el `config.json` del proyecto encima.)
@@ -176,7 +216,7 @@ posición en coordenadas locales del muro (del ala, en un esquinero).
 |---|---|
 | Vertical trasdós | sigue la cara inclinada, baja hasta el fondo de zapata y gira la patilla |
 | Vertical intradós | ídem, patilla en sentido contrario |
-| Reparto horizontal alzado ×2 caras | barra a barra (exacto con el talud) o por bandas; en L con pata en la esquina |
+| Reparto horizontal alzado ×2 caras | por tramos de altura (1 a 3), barra a barra (exacto con el talud) o por bandas; en L con pata en la esquina |
 | Transversal inferior de zapata | con patas verticales en los extremos |
 | Transversal superior de zapata | ídem |
 | Reparto longitudinal de zapata ×2 capas | una barra definida + array en el ancho |
@@ -207,6 +247,13 @@ Requisitos previos en el modelo:
 
 ## Ajustes en `config.json`
 
+- `stemHorizontalZones`: lista de 1 a 3 tramos de abajo arriba, cada uno con
+  `backBarTypeName`, `backSpacingMm`, `frontBarTypeName`, `frontSpacingMm`,
+  `sameBothFaces` y `topMm` (cota superior sobre la zapata, solo en modo
+  manual). `stemZoneMode`: `"auto"` o `"manual"`. `stemHorizontalBackEnabled` y
+  `stemHorizontalFrontEnabled` activan cada cara. Las claves antiguas
+  `stemHorizontalBack` / `stemHorizontalFront` se siguen leyendo y se convierten
+  en un tramo único.
 - `stemHorizontalBandMm`: `0` coloca los horizontales del alzado barra a barra,
   respetando el talud exactamente (≈35 elementos por cara en un muro de 7 m).
   Un valor como `1000` los agrupa en arrays por bandas: muchos menos elementos,

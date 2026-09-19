@@ -75,9 +75,11 @@ namespace RetainingWallRebar
             return "u=" + ToMm(l.X) + " v=" + ToMm(l.Y) + " w=" + ToMm(l.Z) + " mm";
         }
 
+        /// <summary>1 pie = 304.8 mm exactos (unidades internas de Revit).</summary>
+        public const double MmPerFt = 304.8;
+
         /// <summary>Pies -> mm redondeados, para mensajes.</summary>
-        public static double ToMm(double ft) =>
-            Math.Round(UnitUtils.ConvertFromInternalUnits(ft, UnitTypeId.Millimeters));
+        public static double ToMm(double ft) => Math.Round(ft * MmPerFt);
 
         private static double Round(double ft) => ToMm(ft);
 
@@ -663,6 +665,7 @@ namespace RetainingWallRebar
             return t?.Name ?? e.Name;
         }
 
-        public static double Mm(double mm) => UnitUtils.ConvertToInternalUnits(mm, UnitTypeId.Millimeters);
+        /// <summary>mm -> pies. Aritmetica pura (sin UnitUtils) para poder usarse fuera de Revit.</summary>
+        public static double Mm(double mm) => mm / MmPerFt;
     }
 }

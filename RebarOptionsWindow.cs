@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media;
 
 namespace RetainingWallRebar
@@ -11,15 +12,18 @@ namespace RetainingWallRebar
     /// <summary>
     /// Ventana previa al armado: muestra que se ha detectado en cada elemento seleccionado
     /// (tramo recto, esquinero en L o rechazado con el motivo) y deja elegir a mano el
-    /// armado (familias activas, tipo de barra, separaciones, patillas, recubrimientos y
-    /// reglas de esquina). Los valores iniciales vienen de config.json y se pueden guardar
-    /// como nuevos valores por defecto.
-    /// Construida en codigo (sin XAML) para no depender del compilador de XAML.
+    /// armado (familias activas, tipo de barra, separaciones, patillas, recubrimientos,
+    /// reglas de esquina) y el reparto de los horizontales del alzado por tramos de
+    /// altura, con un esquema del muro marcado que se redibuja con cada cambio.
+    /// Los valores iniciales vienen de config.json y se pueden guardar como nuevos
+    /// valores por defecto. Construida en codigo (sin XAML) para no depender del
+    /// compilador de XAML.
     /// </summary>
     public sealed class RebarOptionsWindow : Window
     {
         private readonly AppConfig _cfg;
         private readonly IList<string> _barTypes;
+        private readonly IDictionary<string, double> _diametersMm;
         private readonly IList<HostAnalysis> _items;
 
         /// <summary>Configuracion final si el usuario pulso "Armar"; null si cancelo.</summary>
@@ -27,11 +31,22 @@ namespace RetainingWallRebar
 
         private sealed class FamilyRow
         {
-            public BarFamilyCfg Cfg;
+            public Func<AppConfig, BarFamilyCfg> Select;
             public string Name;
+            public bool HasLeg, HasCut;
             public CheckBox Enabled;
             public ComboBox Type;
             public TextBox Spacing, Leg, Cut;
+        }
+
+        private sealed class ZoneRow
+        {
+            public int Index;
+            public TextBox Top;
+            public ComboBox BackType, FrontType;
+            public TextBox BackSpacing, FrontSpacing;
+            public TextBlock Height, Bars;
+            public List<UIElement> Cells = new List<UIElement>();
         }
 
         private readonly List<FamilyRow> _rows = new List<FamilyRow>();
@@ -39,24 +54,54 @@ namespace RetainingWallRebar
         private TextBox _band, _lapDia, _lapMin;
         private ComboBox _through, _mesh;
 
-        private static readonly Thickness Pad = new Thickness(4, 2, 4, 2);
+        // --- tramos de horizontales ---
+        /// <summary>Siempre 3 tramos guardados, para que al pasar de 3 a 1 y volver no se pierdan los valores.</summary>
+        private readonly StemZoneCfg[] _zoneStore = new StemZoneCfg[3];
+        private int _zoneCount;
+        private RadioButton _modeAuto, _modeManual;
+        private readonly RadioButton[] _countButtons = new RadioButton[3];
+        private CheckBox _backOn, _frontOn, _sameFaces;
+        private Grid _zoneGrid;
+        private readonly List<ZoneRow> _zoneRows = new List<ZoneRow>();
+        private TextBlock _zoneMessage;
+        private StemPreview _preview;
+        private TextBlock _previewCaption;
 
-        public RebarOptionsWindow(AppConfig cfg, IList<string> barTypes, IList<HostAnalysis> items)
+        private HostAnalysis _selected;
+        private readonly Dictionary<HostAnalysis, Border> _itemRows = new Dictionary<HostAnalysis, Border>();
+        private bool _building = true;
+        private bool _refreshing;
+
+        private static readonly Thickness Pad = new Thickness(4, 2, 4, 2);
+        private static readonly Brush SelectedBrush = new SolidColorBrush(Color.FromRgb(0xDC, 0xE8, 0xF6));
+
+        public RebarOptionsWindow(AppConfig cfg, IList<string> barTypes, IDictionary<string, double> diametersMm, IList<HostAnalysis> items)
         {
             _cfg = cfg;
+            _cfg.Normalize();
             _barTypes = barTypes;
+            _diametersMm = diametersMm;
             _items = items;
 
+            List<StemZoneCfg> zones = _cfg.StemHorizontalZones;
+            _zoneCount = Math.Max(1, Math.Min(3, zones.Count));
+            for (int i = 0; i < 3; i++)
+                _zoneStore[i] = (i < zones.Count ? zones[i] : zones[zones.Count - 1]).Clone();
+
             Title = "Armar muros de contencion";
-            Width = 1000;
-            Height = 760;
-            MinWidth = 820;
-            MinHeight = 560;
+            Width = 1180;
+            Height = 820;
+            MinWidth = 960;
+            MinHeight = 600;
             WindowStartupLocation = WindowStartupLocation.CenterScreen;
             ShowInTaskbar = false;
             FontSize = 12;
 
             Content = BuildRoot();
+            _selected = _items.FirstOrDefault(i => i.CanBuild);
+            if (_selected != null) SelectItem(_selected);
+            _building = false;
+            Refresh();
         }
 
         // ------------------------------------------------------------------
@@ -74,6 +119,7 @@ namespace RetainingWallRebar
             root.Children.Add(elements);
 
             var body = new StackPanel();
+            body.Children.Add(BuildZones());
             body.Children.Add(BuildFamilies());
 
             var two = new Grid { Margin = new Thickness(0, 6, 0, 0) };
@@ -108,13 +154,13 @@ namespace RetainingWallRebar
             int ok = _items.Count(i => i.CanBuild);
             var group = new GroupBox
             {
-                Header = "Elementos seleccionados: " + _items.Count + " (" + ok + " armables)",
+                Header = "Elementos seleccionados: " + _items.Count + " (" + ok + " armables). Haz clic en uno para verlo en el esquema.",
                 Padding = new Thickness(4)
             };
             var panel = new StackPanel();
             foreach (HostAnalysis item in _items)
             {
-                var row = new Grid { Margin = new Thickness(0, 2, 0, 2) };
+                var row = new Grid { Margin = new Thickness(0, 1, 0, 1) };
                 row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
                 row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
@@ -144,21 +190,377 @@ namespace RetainingWallRebar
                     Grid.SetColumn(side, 1);
                     row.Children.Add(side);
                 }
-                panel.Children.Add(row);
+
+                var border = new Border { Child = row, Padding = new Thickness(4, 2, 4, 2), CornerRadius = new CornerRadius(3) };
+                if (item.CanBuild)
+                {
+                    border.Cursor = Cursors.Hand;
+                    HostAnalysis captured = item;
+                    border.MouseLeftButtonDown += (s, e) => { SelectItem(captured); Refresh(); };
+                }
+                _itemRows[item] = border;
+                panel.Children.Add(border);
             }
             group.Content = new ScrollViewer
             {
                 Content = panel,
-                MaxHeight = 170,
+                MaxHeight = 150,
                 VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
                 HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled
             };
             return group;
         }
 
+        private void SelectItem(HostAnalysis item)
+        {
+            _selected = item;
+            foreach (var kv in _itemRows)
+                kv.Value.Background = kv.Key == item ? SelectedBrush : Brushes.Transparent;
+        }
+
+        // ------------------------------------------------------------------
+        // Horizontales del alzado por tramos
+        // ------------------------------------------------------------------
+        private UIElement BuildZones()
+        {
+            var group = new GroupBox { Header = "Horizontales del alzado: reparto por tramos de altura", Padding = new Thickness(4) };
+            var grid = new Grid();
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(330) });
+
+            // --- controles ---
+            var left = new StackPanel { Margin = new Thickness(0, 0, 8, 0) };
+
+            var modeRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 2, 0, 2) };
+            modeRow.Children.Add(new TextBlock { Text = "Reparto:", FontWeight = FontWeights.SemiBold, Margin = Pad, VerticalAlignment = VerticalAlignment.Center, Width = 70 });
+            _modeAuto = new RadioButton { Content = "Automatico (partes iguales)", GroupName = "mode", Margin = Pad, VerticalAlignment = VerticalAlignment.Center, IsChecked = !_cfg.StemZoneModeManual };
+            _modeManual = new RadioButton { Content = "Editable (cotas en metros sobre la zapata)", GroupName = "mode", Margin = new Thickness(14, 2, 4, 2), VerticalAlignment = VerticalAlignment.Center, IsChecked = _cfg.StemZoneModeManual };
+            _modeAuto.Checked += (s, e) => OnModeChanged();
+            _modeManual.Checked += (s, e) => OnModeChanged();
+            modeRow.Children.Add(_modeAuto);
+            modeRow.Children.Add(_modeManual);
+            left.Children.Add(modeRow);
+
+            var countRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 2, 0, 2) };
+            countRow.Children.Add(new TextBlock { Text = "Tramos:", FontWeight = FontWeights.SemiBold, Margin = Pad, VerticalAlignment = VerticalAlignment.Center, Width = 70 });
+            string[] countText = { "1 tramo (uniforme)", "2 tramos (mitades)", "3 tramos (tercios)" };
+            for (int i = 0; i < 3; i++)
+            {
+                var rb = new RadioButton { Content = countText[i], GroupName = "count", Margin = new Thickness(i == 0 ? 4 : 14, 2, 4, 2), VerticalAlignment = VerticalAlignment.Center, IsChecked = _zoneCount == i + 1 };
+                int n = i + 1;
+                rb.Checked += (s, e) => OnZoneCountChanged(n);
+                _countButtons[i] = rb;
+                countRow.Children.Add(rb);
+            }
+            left.Children.Add(countRow);
+
+            var facesRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 2, 0, 4) };
+            facesRow.Children.Add(new TextBlock { Text = "Caras:", FontWeight = FontWeights.SemiBold, Margin = Pad, VerticalAlignment = VerticalAlignment.Center, Width = 70 });
+            _backOn = new CheckBox { Content = "Trasdos activo", IsChecked = _cfg.StemHorizontalBackEnabled, Margin = Pad, VerticalAlignment = VerticalAlignment.Center };
+            _frontOn = new CheckBox { Content = "Intrados activo", IsChecked = _cfg.StemHorizontalFrontEnabled, Margin = new Thickness(14, 2, 4, 2), VerticalAlignment = VerticalAlignment.Center };
+            _sameFaces = new CheckBox { Content = "Mismo armado en las dos caras", IsChecked = _zoneStore.Take(_zoneCount).All(z => z.SameBothFaces), Margin = new Thickness(14, 2, 4, 2), VerticalAlignment = VerticalAlignment.Center };
+            RoutedEventHandler facesChanged = (s, e) => { UpdateZoneRowState(); Refresh(); };
+            foreach (CheckBox cb in new[] { _backOn, _frontOn, _sameFaces }) { cb.Checked += facesChanged; cb.Unchecked += facesChanged; }
+            facesRow.Children.Add(_backOn);
+            facesRow.Children.Add(_frontOn);
+            facesRow.Children.Add(_sameFaces);
+            left.Children.Add(facesRow);
+
+            _zoneGrid = new Grid();
+            for (int c = 0; c < 8; c++)
+                _zoneGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            _zoneGrid.ColumnDefinitions[3].Width = new GridLength(1, GridUnitType.Star);
+            _zoneGrid.ColumnDefinitions[5].Width = new GridLength(1, GridUnitType.Star);
+            left.Children.Add(_zoneGrid);
+            RebuildZoneTable();
+
+            _zoneMessage = new TextBlock { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(4, 4, 4, 0), Foreground = Brushes.Firebrick };
+            left.Children.Add(_zoneMessage);
+            left.Children.Add(new TextBlock
+            {
+                Text = "Los tramos se numeran de abajo arriba. En cada tramo la primera barra va a media separacion de su " +
+                       "limite inferior; la ultima del tramo superior respeta el recubrimiento de coronacion. Las cotas del " +
+                       "modo editable se miden desde la cara superior de la zapata y se aplican a todos los muros seleccionados; " +
+                       "un tramo que quede por encima de la coronacion de un muro se omite en ese muro.",
+                TextWrapping = TextWrapping.Wrap,
+                Foreground = Brushes.DimGray,
+                Margin = new Thickness(4, 6, 4, 0)
+            });
+            Grid.SetColumn(left, 0);
+            grid.Children.Add(left);
+
+            // --- esquema ---
+            var right = new Grid();
+            right.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            right.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+            _previewCaption = new TextBlock { Text = "Esquema", FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 0, 0, 2), TextTrimming = TextTrimming.CharacterEllipsis };
+            Grid.SetRow(_previewCaption, 0);
+            right.Children.Add(_previewCaption);
+            _preview = new StemPreview { MinHeight = 320 };
+            var frame = new Border { Child = _preview, BorderBrush = Brushes.Gray, BorderThickness = new Thickness(1), Background = Brushes.White };
+            Grid.SetRow(frame, 1);
+            right.Children.Add(frame);
+            Grid.SetColumn(right, 1);
+            grid.Children.Add(right);
+
+            group.Content = grid;
+            return group;
+        }
+
+        private void RebuildZoneTable()
+        {
+            _zoneGrid.Children.Clear();
+            _zoneGrid.RowDefinitions.Clear();
+            _zoneRows.Clear();
+
+            string[] headers = { "Tramo", "Cota superior (m)", "Altura (m)", "Trasdos: tipo de barra", "sep. (mm)", "Intrados: tipo de barra", "sep. (mm)", "Barras / cara" };
+            _zoneGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            for (int c = 0; c < headers.Length; c++)
+            {
+                var h = new TextBlock { Text = headers[c], FontWeight = FontWeights.Bold, Margin = Pad };
+                Grid.SetRow(h, 0); Grid.SetColumn(h, c);
+                _zoneGrid.Children.Add(h);
+            }
+
+            // el tramo superior en la primera fila, igual que en el esquema
+            for (int i = _zoneCount - 1; i >= 0; i--)
+            {
+                StemZoneCfg z = _zoneStore[i];
+                int r = _zoneGrid.RowDefinitions.Count;
+                _zoneGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+                var row = new ZoneRow { Index = i };
+                Brush brush = StemPreview.ZoneBrushes[i % StemPreview.ZoneBrushes.Length];
+
+                string pos = _zoneCount == 1 ? "unico" : i == _zoneCount - 1 ? "superior" : i == 0 ? "inferior" : "intermedio";
+                var label = new StackPanel { Orientation = Orientation.Horizontal, Margin = Pad, VerticalAlignment = VerticalAlignment.Center };
+                label.Children.Add(new Border { Width = 12, Height = 12, Background = brush, CornerRadius = new CornerRadius(2), Margin = new Thickness(0, 0, 6, 0), VerticalAlignment = VerticalAlignment.Center });
+                label.Children.Add(new TextBlock { Text = "Tramo " + (i + 1) + " (" + pos + ")", VerticalAlignment = VerticalAlignment.Center });
+                Add(row, label, r, 0);
+
+                row.Top = NumBox(z.TopMm > 0 ? z.TopMm / 1000.0 : 0);
+                row.Top.ToolTip = "Cota superior del tramo sobre la cara superior de la zapata";
+                if (i == _zoneCount - 1) { row.Top.Text = "coronacion"; row.Top.IsReadOnly = true; row.Top.Foreground = Brushes.DimGray; }
+                row.Top.TextChanged += (s, e) => Refresh();
+                Add(row, row.Top, r, 1);
+
+                row.Height = new TextBlock { Text = "-", Margin = Pad, VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Right, MinWidth = 50 };
+                Add(row, row.Height, r, 2);
+
+                row.BackType = TypeBox(z.BackBarTypeName);
+                Add(row, row.BackType, r, 3);
+                row.BackSpacing = NumBox(z.BackSpacingMm);
+                row.BackSpacing.TextChanged += (s, e) => Refresh();
+                Add(row, row.BackSpacing, r, 4);
+
+                row.FrontType = TypeBox(z.FrontBarTypeName);
+                Add(row, row.FrontType, r, 5);
+                row.FrontSpacing = NumBox(z.FrontSpacingMm);
+                row.FrontSpacing.TextChanged += (s, e) => Refresh();
+                Add(row, row.FrontSpacing, r, 6);
+
+                row.Bars = new TextBlock { Text = "-", Margin = Pad, VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Right, MinWidth = 60 };
+                Add(row, row.Bars, r, 7);
+
+                int zi = i;
+                foreach (UIElement cell in row.Cells)
+                {
+                    cell.MouseEnter += (s, e) => _preview.HoverZone = zi;
+                    cell.MouseLeave += (s, e) => _preview.HoverZone = -1;
+                }
+                _zoneRows.Add(row);
+            }
+            UpdateZoneRowState();
+        }
+
+        private void Add(ZoneRow row, UIElement el, int r, int c)
+        {
+            Grid.SetRow(el, r); Grid.SetColumn(el, c);
+            _zoneGrid.Children.Add(el);
+            row.Cells.Add(el);
+        }
+
+        private ComboBox TypeBox(string current)
+        {
+            var cb = new ComboBox { IsEditable = true, Margin = Pad, MinWidth = 120 };
+            foreach (string t in _barTypes) cb.Items.Add(t);
+            cb.Text = RebarGenerator.MatchName(_barTypes, current) ?? current ?? "";
+            cb.SelectionChanged += (s, e) => Dispatcher.BeginInvoke(new Action(Refresh));
+            cb.LostFocus += (s, e) => Refresh();
+            return cb;
+        }
+
+        /// <summary>Activa o desactiva los controles de cada tramo segun modo, caras activas y "mismo armado".</summary>
+        private void UpdateZoneRowState()
+        {
+            bool manual = _modeManual.IsChecked == true;
+            bool back = _backOn.IsChecked == true, front = _frontOn.IsChecked == true;
+            bool same = _sameFaces.IsChecked == true;
+            foreach (ZoneRow row in _zoneRows)
+            {
+                bool isTop = row.Index == _zoneCount - 1;
+                row.Top.IsReadOnly = !manual || isTop;
+                row.Top.Foreground = row.Top.IsReadOnly ? Brushes.DimGray : Brushes.Black;
+                row.BackType.IsEnabled = back;
+                row.BackSpacing.IsEnabled = back;
+                row.FrontType.IsEnabled = front && !same;
+                row.FrontSpacing.IsEnabled = front && !same;
+            }
+        }
+
+        private void OnModeChanged()
+        {
+            if (_building) return;
+            bool manual = _modeManual.IsChecked == true;
+            if (manual)
+            {
+                // al pasar a editable se recuperan las cotas guardadas; si no hay, arrancan
+                // en el reparto automatico del muro marcado
+                WallSection s = SelectedSection();
+                double h = s != null ? (s.LenV - s.FootingTop) * 0.3048 : 0;
+                _refreshing = true;
+                foreach (ZoneRow row in _zoneRows)
+                {
+                    if (row.Index == _zoneCount - 1) continue;
+                    double stored = _zoneStore[row.Index].TopMm;
+                    row.Top.Text = stored > 0 ? Fmt(stored / 1000.0) : h > 0 ? Fmt(h * (row.Index + 1) / _zoneCount) : "";
+                }
+                _refreshing = false;
+            }
+            UpdateZoneRowState();
+            Refresh();
+        }
+
+        private void OnZoneCountChanged(int n)
+        {
+            if (_building || n == _zoneCount) return;
+            ReadZoneRows(null);
+            // los tramos nuevos heredan el armado del que hasta ahora era el superior
+            for (int i = _zoneCount; i < n; i++)
+            {
+                StemZoneCfg src = _zoneStore[_zoneCount - 1];
+                _zoneStore[i].BackBarTypeName = src.BackBarTypeName;
+                _zoneStore[i].BackSpacingMm = src.BackSpacingMm;
+                _zoneStore[i].FrontBarTypeName = src.FrontBarTypeName;
+                _zoneStore[i].FrontSpacingMm = src.FrontSpacingMm;
+                _zoneStore[i].TopMm = 0;
+            }
+            _zoneCount = n;
+            _building = true;
+            RebuildZoneTable();
+            _building = false;
+            if (_modeManual.IsChecked == true) OnModeChanged(); else Refresh();
+        }
+
+        /// <summary>Vuelca la tabla de tramos en _zoneStore. errors puede ser null (lectura tolerante).</summary>
+        private void ReadZoneRows(List<string> errors)
+        {
+            bool manual = _modeManual.IsChecked == true;
+            bool same = _sameFaces.IsChecked == true;
+            double prevTop = 0;
+            foreach (ZoneRow row in _zoneRows.OrderBy(r => r.Index))
+            {
+                StemZoneCfg z = _zoneStore[row.Index];
+                z.SameBothFaces = same;
+                bool isTop = row.Index == _zoneCount - 1;
+                string name = "Tramo " + (row.Index + 1);
+
+                if (manual && !isTop)
+                {
+                    if (TryParse(row.Top.Text, out double m) && m > 0)
+                    {
+                        if (m * 1000 <= prevTop + 1e-6) errors?.Add(name + ": la cota superior tiene que ser mayor que la del tramo anterior");
+                        z.TopMm = m * 1000;
+                        prevTop = z.TopMm;
+                    }
+                    else errors?.Add(name + ": cota superior no valida (\"" + row.Top.Text + "\")");
+                }
+
+                string bt = (row.BackType.Text ?? "").Trim();
+                if (bt.Length > 0) z.BackBarTypeName = bt;
+                else if (_backOn.IsChecked == true) errors?.Add(name + ": elige el tipo de barra del trasdos");
+                if (TryParse(row.BackSpacing.Text, out double bs) && bs >= 1) z.BackSpacingMm = bs;
+                else if (_backOn.IsChecked == true) errors?.Add(name + ": separacion del trasdos no valida");
+
+                if (same)
+                {
+                    z.FrontBarTypeName = z.BackBarTypeName;
+                    z.FrontSpacingMm = z.BackSpacingMm;
+                }
+                else
+                {
+                    string ft = (row.FrontType.Text ?? "").Trim();
+                    if (ft.Length > 0) z.FrontBarTypeName = ft;
+                    else if (_frontOn.IsChecked == true) errors?.Add(name + ": elige el tipo de barra del intrados");
+                    if (TryParse(row.FrontSpacing.Text, out double fs) && fs >= 1) z.FrontSpacingMm = fs;
+                    else if (_frontOn.IsChecked == true) errors?.Add(name + ": separacion del intrados no valida");
+                }
+            }
+        }
+
+        private WallSection SelectedSection()
+        {
+            if (_selected == null || !_selected.CanBuild) return null;
+            return _selected.Straight ?? _selected.Corner.Wings[0];
+        }
+
+        private double DiameterFt(string name)
+        {
+            if (_barTypes.Count == 0) return 0;
+            string match = RebarGenerator.MatchName(_barTypes, name) ?? _barTypes[0];
+            return _diametersMm.TryGetValue(match, out double mm) ? WallSection.Mm(mm) : 0;
+        }
+
+        /// <summary>Recalcula el reparto con lo que hay en pantalla, actualiza la tabla y redibuja el esquema.</summary>
+        private void Refresh()
+        {
+            if (_building || _refreshing) return;
+            _refreshing = true;
+            try { RefreshCore(); }
+            finally { _refreshing = false; }
+        }
+
+        private void RefreshCore()
+        {
+            var scratch = _cfg.Clone();
+            ReadUi(scratch, null);
+
+            WallSection s = SelectedSection();
+            if (s == null)
+            {
+                foreach (ZoneRow row in _zoneRows) { row.Height.Text = "-"; row.Bars.Text = "-"; }
+                _zoneMessage.Text = "";
+                _previewCaption.Text = "Esquema: sin elemento armable";
+                _preview.Clear("Sin elemento armable");
+                return;
+            }
+
+            ZoneLayout layout = StemZones.Resolve(s, scratch, DiameterFt, false);
+            var msgs = new List<string>();
+            if (layout.Error != null) msgs.Add(layout.Error);
+            msgs.AddRange(layout.Warnings);
+            _zoneMessage.Text = string.Join(Environment.NewLine, msgs);
+
+            foreach (ZoneRow row in _zoneRows)
+            {
+                ResolvedZone z = layout.Zones.FirstOrDefault(x => x.Index == row.Index);
+                if (z == null) { row.Height.Text = "-"; row.Bars.Text = "-"; continue; }
+                row.Height.Text = Fmt((z.VTo - z.VFrom) * 0.3048);
+                if (_modeAuto.IsChecked == true && !z.IsTop) row.Top.Text = Fmt((z.VTo - s.FootingTop) * 0.3048);
+                string b = z.Back != null ? z.Back.Heights.Count.ToString() : "-";
+                string f = z.Front != null ? z.Front.Heights.Count.ToString() : "-";
+                row.Bars.Text = (z.Cfg.SameBothFaces && z.Back != null && z.Front != null) ? b : b + " / " + f;
+            }
+
+            _previewCaption.Text = "Esquema: " + _selected.Tag.Trim() + (_selected.Corner != null ? " (ala 1)" : "");
+            _preview.Show(s, scratch, layout, DiameterFt);
+        }
+
+        // ------------------------------------------------------------------
+        // Resto de familias, recubrimientos y opciones
+        // ------------------------------------------------------------------
         private UIElement BuildFamilies()
         {
-            var group = new GroupBox { Header = "Familias de barras", Padding = new Thickness(4) };
+            var group = new GroupBox { Header = "Verticales del alzado y zapata", Padding = new Thickness(4), Margin = new Thickness(0, 6, 0, 0) };
             var grid = new Grid();
             string[] headers = { "Familia", "Activa", "Tipo de barra", "Separacion (mm)", "Patilla / pata (mm)", "Baston (mm)" };
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -176,14 +578,12 @@ namespace RetainingWallRebar
                 grid.Children.Add(h);
             }
 
-            AddFamily(grid, "Vertical trasdos (alzado)", _cfg.StemVerticalBack, leg: true, cut: true, legHint: "patilla en zapata");
-            AddFamily(grid, "Vertical intrados (alzado)", _cfg.StemVerticalFront, leg: true, cut: true, legHint: "patilla en zapata");
-            AddFamily(grid, "Horizontal trasdos (alzado)", _cfg.StemHorizontalBack, leg: false, cut: false, legHint: null);
-            AddFamily(grid, "Horizontal intrados (alzado)", _cfg.StemHorizontalFront, leg: false, cut: false, legHint: null);
-            AddFamily(grid, "Transversal inferior (zapata)", _cfg.FootingTransverseBottom, leg: true, cut: false, legHint: "pata vertical en extremos");
-            AddFamily(grid, "Transversal superior (zapata)", _cfg.FootingTransverseTop, leg: true, cut: false, legHint: "pata vertical en extremos");
-            AddFamily(grid, "Longitudinal inferior (zapata)", _cfg.FootingLongitudinalBottom, leg: false, cut: false, legHint: null);
-            AddFamily(grid, "Longitudinal superior (zapata)", _cfg.FootingLongitudinalTop, leg: false, cut: false, legHint: null);
+            AddFamily(grid, "Vertical trasdos (alzado)", c => c.StemVerticalBack, leg: true, cut: true, legHint: "patilla en zapata");
+            AddFamily(grid, "Vertical intrados (alzado)", c => c.StemVerticalFront, leg: true, cut: true, legHint: "patilla en zapata");
+            AddFamily(grid, "Transversal inferior (zapata)", c => c.FootingTransverseBottom, leg: true, cut: false, legHint: "pata vertical en extremos");
+            AddFamily(grid, "Transversal superior (zapata)", c => c.FootingTransverseTop, leg: true, cut: false, legHint: "pata vertical en extremos");
+            AddFamily(grid, "Longitudinal inferior (zapata)", c => c.FootingLongitudinalBottom, leg: false, cut: false, legHint: null);
+            AddFamily(grid, "Longitudinal superior (zapata)", c => c.FootingLongitudinalTop, leg: false, cut: false, legHint: null);
 
             var panel = new StackPanel();
             panel.Children.Add(grid);
@@ -199,12 +599,13 @@ namespace RetainingWallRebar
             return group;
         }
 
-        private void AddFamily(Grid grid, string name, BarFamilyCfg fam, bool leg, bool cut, string legHint)
+        private void AddFamily(Grid grid, string name, Func<AppConfig, BarFamilyCfg> select, bool leg, bool cut, string legHint)
         {
             int r = grid.RowDefinitions.Count;
             grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
-            var row = new FamilyRow { Cfg = fam, Name = name };
+            BarFamilyCfg fam = select(_cfg);
+            var row = new FamilyRow { Select = select, Name = name, HasLeg = leg, HasCut = cut };
 
             var label = new TextBlock { Text = name, Margin = Pad, VerticalAlignment = VerticalAlignment.Center };
             Grid.SetRow(label, r); Grid.SetColumn(label, 0);
@@ -214,12 +615,8 @@ namespace RetainingWallRebar
             Grid.SetRow(row.Enabled, r); Grid.SetColumn(row.Enabled, 1);
             grid.Children.Add(row.Enabled);
 
-            row.Type = new ComboBox { IsEditable = true, Margin = Pad, MinWidth = 160 };
-            foreach (string t in _barTypes) row.Type.Items.Add(t);
-            string current = fam.BarTypeName ?? "";
-            string match = _barTypes.FirstOrDefault(t => string.Equals(t, current, StringComparison.OrdinalIgnoreCase))
-                        ?? _barTypes.FirstOrDefault(t => current.Length > 0 && t.IndexOf(current, StringComparison.OrdinalIgnoreCase) >= 0);
-            row.Type.Text = match ?? current;
+            row.Type = TypeBox(fam.BarTypeName);
+            row.Type.MinWidth = 160;
             Grid.SetRow(row.Type, r); Grid.SetColumn(row.Type, 2);
             grid.Children.Add(row.Type);
 
@@ -228,14 +625,12 @@ namespace RetainingWallRebar
             grid.Children.Add(row.Spacing);
 
             row.Leg = NumBox(fam.LegMm);
-            row.Leg.IsEnabled = leg;
             if (!leg) row.Leg.Text = "-";
             if (legHint != null) row.Leg.ToolTip = legHint;
             Grid.SetRow(row.Leg, r); Grid.SetColumn(row.Leg, 4);
             grid.Children.Add(row.Leg);
 
             row.Cut = NumBox(fam.CutLengthMm);
-            row.Cut.IsEnabled = cut;
             if (!cut) row.Cut.Text = "-";
             else row.Cut.ToolTip = "0 = hasta coronacion";
             Grid.SetRow(row.Cut, r); Grid.SetColumn(row.Cut, 5);
@@ -270,6 +665,8 @@ namespace RetainingWallRebar
             _covFootBot = AddLabeled(grid, "Zapata, cara inferior", _cfg.CoverFootingBottomMm);
             _covFootSide = AddLabeled(grid, "Zapata, laterales", _cfg.CoverFootingSideMm);
             _covEnd = AddLabeled(grid, "Extremos del tramo", _cfg.CoverEndMm);
+            _covStem.TextChanged += (s, e) => Refresh();
+            _covStemTop.TextChanged += (s, e) => Refresh();
             group.Content = grid;
             return group;
         }
@@ -282,6 +679,8 @@ namespace RetainingWallRebar
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
             _band = AddLabeled(grid, "Horizontales del alzado por bandas (mm, 0 = barra a barra)", _cfg.StemHorizontalBandMm);
+            _band.ToolTip = "Con bandas, cada tramo se agrupa en arrays de esa altura: menos elementos, pero las barras de cada " +
+                            "banda quedan equiespaciadas dentro de ella y no exactamente donde las dibuja el esquema.";
 
             AddHeading(grid, "Muros esquineros en L");
 
@@ -404,52 +803,70 @@ namespace RetainingWallRebar
 
         private static string Mm(double ft) => WallSection.ToMm(ft).ToString("0", CultureInfo.InvariantCulture);
 
+        private static bool TryParse(string text, out double value)
+        {
+            string t = (text ?? "").Trim().Replace(',', '.');
+            return double.TryParse(t, NumberStyles.Float, CultureInfo.InvariantCulture, out value);
+        }
+
         // ------------------------------------------------------------------
         // Lectura de la interfaz -> configuracion
         // ------------------------------------------------------------------
         private static bool TryNum(TextBox tb, string label, double min, List<string> errors, out double value)
         {
-            string t = (tb.Text ?? "").Trim().Replace(',', '.');
-            if (double.TryParse(t, NumberStyles.Float, CultureInfo.InvariantCulture, out value) && value >= min)
-                return true;
-            errors.Add(label + ": valor no valido (\"" + tb.Text + "\", minimo " + Fmt(min) + ")");
+            if (TryParse(tb.Text, out value) && value >= min) return true;
+            errors?.Add(label + ": valor no valido (\"" + tb.Text + "\", minimo " + Fmt(min) + ")");
             value = 0;
             return false;
         }
 
-        /// <summary>Vuelca los controles en _cfg. Devuelve false (y avisa) si hay valores no validos.</summary>
-        private bool Collect()
+        /// <summary>
+        /// Vuelca los controles en target. Con errors = null la lectura es tolerante (para el
+        /// esquema): los valores no validos se dejan como estaban.
+        /// </summary>
+        private void ReadUi(AppConfig target, List<string> errors)
         {
-            var errors = new List<string>();
             double v;
+            if (TryNum(_covStem, "Recubrimiento alzado", 0, errors, out v)) target.CoverStemMm = v;
+            if (TryNum(_covStemTop, "Recubrimiento coronacion", 0, errors, out v)) target.CoverStemTopMm = v;
+            if (TryNum(_covFootTop, "Recubrimiento zapata superior", 0, errors, out v)) target.CoverFootingTopMm = v;
+            if (TryNum(_covFootBot, "Recubrimiento zapata inferior", 0, errors, out v)) target.CoverFootingBottomMm = v;
+            if (TryNum(_covFootSide, "Recubrimiento zapata laterales", 0, errors, out v)) target.CoverFootingSideMm = v;
+            if (TryNum(_covEnd, "Recubrimiento extremos", 0, errors, out v)) target.CoverEndMm = v;
+            if (TryNum(_band, "Bandas de horizontales", 0, errors, out v)) target.StemHorizontalBandMm = v;
+            if (TryNum(_lapDia, "Solape en esquina (diametros)", 0, errors, out v)) target.CornerLapDiameters = v;
+            if (TryNum(_lapMin, "Solape en esquina (minimo mm)", 0, errors, out v)) target.CornerLapMinMm = v;
 
-            if (TryNum(_covStem, "Recubrimiento alzado", 0, errors, out v)) _cfg.CoverStemMm = v;
-            if (TryNum(_covStemTop, "Recubrimiento coronacion", 0, errors, out v)) _cfg.CoverStemTopMm = v;
-            if (TryNum(_covFootTop, "Recubrimiento zapata superior", 0, errors, out v)) _cfg.CoverFootingTopMm = v;
-            if (TryNum(_covFootBot, "Recubrimiento zapata inferior", 0, errors, out v)) _cfg.CoverFootingBottomMm = v;
-            if (TryNum(_covFootSide, "Recubrimiento zapata laterales", 0, errors, out v)) _cfg.CoverFootingSideMm = v;
-            if (TryNum(_covEnd, "Recubrimiento extremos", 0, errors, out v)) _cfg.CoverEndMm = v;
-            if (TryNum(_band, "Bandas de horizontales", 0, errors, out v)) _cfg.StemHorizontalBandMm = v;
-            if (TryNum(_lapDia, "Solape en esquina (diametros)", 0, errors, out v)) _cfg.CornerLapDiameters = v;
-            if (TryNum(_lapMin, "Solape en esquina (minimo mm)", 0, errors, out v)) _cfg.CornerLapMinMm = v;
-
-            _cfg.CornerThroughWing = _through.SelectedIndex == 1 ? "1" : _through.SelectedIndex == 2 ? "2" : "auto";
-            _cfg.CornerFootingMesh = _mesh.SelectedIndex == 1 ? "both" : "through";
+            target.CornerThroughWing = _through.SelectedIndex == 1 ? "1" : _through.SelectedIndex == 2 ? "2" : "auto";
+            target.CornerFootingMesh = _mesh.SelectedIndex == 1 ? "both" : "through";
 
             foreach (FamilyRow row in _rows)
             {
-                row.Cfg.Enabled = row.Enabled.IsChecked == true;
-                if (!row.Cfg.Enabled) continue;
+                BarFamilyCfg fam = row.Select(target);
+                fam.Enabled = row.Enabled.IsChecked == true;
+                if (!fam.Enabled) continue;
 
                 string type = (row.Type.Text ?? "").Trim();
-                if (type.Length == 0) errors.Add(row.Name + ": elige un tipo de barra");
-                else row.Cfg.BarTypeName = type;
+                if (type.Length == 0) errors?.Add(row.Name + ": elige un tipo de barra");
+                else fam.BarTypeName = type;
 
-                if (TryNum(row.Spacing, row.Name + ", separacion", 1, errors, out v)) row.Cfg.SpacingMm = v;
-                if (row.Leg.IsEnabled && TryNum(row.Leg, row.Name + ", patilla", 0, errors, out v)) row.Cfg.LegMm = v;
-                if (row.Cut.IsEnabled && TryNum(row.Cut, row.Name + ", baston", 0, errors, out v)) row.Cfg.CutLengthMm = v;
+                if (TryNum(row.Spacing, row.Name + ", separacion", 1, errors, out v)) fam.SpacingMm = v;
+                if (row.HasLeg && TryNum(row.Leg, row.Name + ", patilla", 0, errors, out v)) fam.LegMm = v;
+                if (row.HasCut && TryNum(row.Cut, row.Name + ", baston", 0, errors, out v)) fam.CutLengthMm = v;
             }
 
+            // horizontales por tramos
+            target.StemHorizontalBackEnabled = _backOn.IsChecked == true;
+            target.StemHorizontalFrontEnabled = _frontOn.IsChecked == true;
+            target.StemZoneMode = _modeManual.IsChecked == true ? "manual" : "auto";
+            ReadZoneRows(errors);
+            target.StemHorizontalZones = _zoneStore.Take(_zoneCount).Select(z => z.Clone()).ToList();
+        }
+
+        private bool Collect()
+        {
+            var errors = new List<string>();
+            ReadUi(_cfg, errors);
             if (errors.Count == 0) return true;
             MessageBox.Show(this, string.Join(Environment.NewLine, errors), "Revisa los valores",
                             MessageBoxButton.OK, MessageBoxImage.Warning);
