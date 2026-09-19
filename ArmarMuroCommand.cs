@@ -36,7 +36,11 @@ namespace RetainingWallRebar
                 return Result.Cancelled;
             }
 
-            List<string> barTypes = RebarGenerator.AllBarTypes(doc).Select(b => b.Name).ToList();
+            var allTypes = RebarGenerator.AllBarTypes(doc);
+            List<string> barTypes = allTypes.Select(b => b.Name).ToList();
+            var diametersMm = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+            foreach (var bt in allTypes)
+                diametersMm[bt.Name] = UnitUtils.ConvertFromInternalUnits(bt.BarNominalDiameter, UnitTypeId.Millimeters);
             if (barTypes.Count == 0)
             {
                 message = "El proyecto no tiene ningun tipo de barra (RebarBarType). Carga una familia de armadura primero.";
@@ -47,7 +51,7 @@ namespace RetainingWallRebar
             var items = hosts.Select(h => HostAnalysis.Analyze(doc, h, cfg)).ToList();
 
             // --- 2. Interfaz: el usuario revisa que se ha detectado y elige armado y aceros ---
-            var win = new RebarOptionsWindow(cfg.Clone(), barTypes, items);
+            var win = new RebarOptionsWindow(cfg.Clone(), barTypes, diametersMm, items);
             try { new WindowInteropHelper(win).Owner = commandData.Application.MainWindowHandle; } catch { }
             bool? ok = win.ShowDialog();
             if (ok != true || win.Result == null) return Result.Cancelled;

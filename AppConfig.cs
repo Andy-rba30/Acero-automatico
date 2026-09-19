@@ -31,6 +31,34 @@ namespace RetainingWallRebar
         public string AxisMode { get; set; } = "";
     }
 
+    /// <summary>
+    /// Un tramo de altura del alzado con su propio armado horizontal. Los tramos se
+    /// guardan de abajo arriba (el primero arranca en la cara superior de la zapata).
+    /// </summary>
+    public class StemZoneCfg
+    {
+        /// <summary>
+        /// Cota superior del tramo medida desde la cara superior de la zapata (mm).
+        /// Solo se usa en modo "manual" y se ignora en el ultimo tramo, que llega
+        /// siempre a coronacion.
+        /// </summary>
+        public double TopMm { get; set; } = 0;
+
+        /// <summary>Si es true, el intrados usa el mismo tipo de barra y separacion que el trasdos.</summary>
+        public bool SameBothFaces { get; set; } = true;
+
+        public string BackBarTypeName { get; set; } = "";
+        public double BackSpacingMm { get; set; } = 200;
+        public string FrontBarTypeName { get; set; } = "";
+        public double FrontSpacingMm { get; set; } = 200;
+
+        public StemZoneCfg Clone() => (StemZoneCfg)MemberwiseClone();
+
+        /// <summary>Tipo de barra y separacion efectivos de una cara (respeta SameBothFaces).</summary>
+        public string BarTypeFor(bool back) => back || SameBothFaces ? BackBarTypeName : FrontBarTypeName;
+        public double SpacingFor(bool back) => back || SameBothFaces ? BackSpacingMm : FrontSpacingMm;
+    }
+
     public class AppConfig
     {
         // --- recubrimientos (mm) ---
@@ -44,12 +72,31 @@ namespace RetainingWallRebar
         // --- familias de barras ---
         public BarFamilyCfg StemVerticalBack { get; set; } = new BarFamilyCfg();
         public BarFamilyCfg StemVerticalFront { get; set; } = new BarFamilyCfg();
-        public BarFamilyCfg StemHorizontalBack { get; set; } = new BarFamilyCfg();
-        public BarFamilyCfg StemHorizontalFront { get; set; } = new BarFamilyCfg();
         public BarFamilyCfg FootingTransverseTop { get; set; } = new BarFamilyCfg();
         public BarFamilyCfg FootingTransverseBottom { get; set; } = new BarFamilyCfg();
         public BarFamilyCfg FootingLongitudinalTop { get; set; } = new BarFamilyCfg();
         public BarFamilyCfg FootingLongitudinalBottom { get; set; } = new BarFamilyCfg();
+
+        // --- horizontales del alzado, por tramos de altura ---
+
+        /// <summary>Horizontales del trasdos / intrados activos (en todos los tramos).</summary>
+        public bool StemHorizontalBackEnabled { get; set; } = true;
+        public bool StemHorizontalFrontEnabled { get; set; } = true;
+
+        /// <summary>
+        /// Reparto de los tramos en altura: "auto" = partes iguales de la altura libre del
+        /// alzado (mitades, tercios); "manual" = cotas escritas en cada tramo (TopMm).
+        /// </summary>
+        public string StemZoneMode { get; set; } = "auto";
+
+        /// <summary>Tramos de abajo arriba (1 a 3). Cada uno con su tipo de barra y separacion por cara.</summary>
+        public List<StemZoneCfg> StemHorizontalZones { get; set; } = new List<StemZoneCfg>();
+
+        /// <summary>Claves antiguas (una sola familia por cara); al cargar se convierten en un tramo unico.</summary>
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public BarFamilyCfg StemHorizontalBack { get; set; }
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public BarFamilyCfg StemHorizontalFront { get; set; }
 
         /// <summary>
         /// Altura de banda para agrupar los horizontales del alzado en arrays (mm).
@@ -125,6 +172,53 @@ namespace RetainingWallRebar
         }
 
         [JsonIgnore]
+        public bool StemZoneModeManual =>
+            string.Equals((StemZoneMode ?? "").Trim(), "manual", StringComparison.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// Deja la configuracion en un estado coherente: entre 1 y 3 tramos, y las claves
+        /// antiguas de horizontales (una familia por cara) convertidas en un tramo unico.
+        /// </summary>
+        public void Normalize()
+        {
+            if (StemHorizontalZones == null) StemHorizontalZones = new List<StemZoneCfg>();
+            StemHorizontalZones.RemoveAll(z => z == null);
+
+            if (StemHorizontalZones.Count == 0)
+            {
+                var z = new StemZoneCfg();
+                BarFamilyCfg b = StemHorizontalBack, f = StemHorizontalFront;
+                if (b != null)
+                {
+                    z.BackBarTypeName = b.BarTypeName ?? "";
+                    z.BackSpacingMm = b.SpacingMm;
+                    StemHorizontalBackEnabled = b.Enabled;
+                }
+                if (f != null)
+                {
+                    z.FrontBarTypeName = f.BarTypeName ?? "";
+                    z.FrontSpacingMm = f.SpacingMm;
+                    StemHorizontalFrontEnabled = f.Enabled;
+                    z.SameBothFaces = b != null &&
+                                      string.Equals(b.BarTypeName, f.BarTypeName, StringComparison.OrdinalIgnoreCase) &&
+                                      Math.Abs(b.SpacingMm - f.SpacingMm) < 1e-9;
+                }
+                if (b == null && f == null) z.BackBarTypeName = "1/2";
+                StemHorizontalZones.Add(z);
+            }
+            if (StemHorizontalZones.Count > 3) StemHorizontalZones.RemoveRange(3, StemHorizontalZones.Count - 3);
+            foreach (StemZoneCfg z in StemHorizontalZones)
+            {
+                if (z.BackBarTypeName == null) z.BackBarTypeName = "";
+                if (string.IsNullOrWhiteSpace(z.FrontBarTypeName)) z.FrontBarTypeName = z.BackBarTypeName;
+                if (z.FrontSpacingMm <= 0) z.FrontSpacingMm = z.BackSpacingMm;
+            }
+            StemHorizontalBack = null;
+            StemHorizontalFront = null;
+            if (!StemZoneModeManual) StemZoneMode = "auto";
+        }
+
+        [JsonIgnore]
         public bool CornerFootingMeshBoth =>
             string.Equals((CornerFootingMesh ?? "").Trim(), "both", StringComparison.OrdinalIgnoreCase);
 
@@ -152,8 +246,11 @@ namespace RetainingWallRebar
         public static AppConfig Load()
         {
             string path = ConfigPath();
-            if (!File.Exists(path)) return new AppConfig();
-            return JsonSerializer.Deserialize<AppConfig>(File.ReadAllText(path), ReadOptions()) ?? new AppConfig();
+            AppConfig cfg = File.Exists(path)
+                ? JsonSerializer.Deserialize<AppConfig>(File.ReadAllText(path), ReadOptions()) ?? new AppConfig()
+                : new AppConfig();
+            cfg.Normalize();
+            return cfg;
         }
 
         /// <summary>Guarda esta configuracion como config.json junto a la DLL (valores por defecto de la interfaz).</summary>
@@ -165,8 +262,10 @@ namespace RetainingWallRebar
         /// <summary>Copia independiente, para que la interfaz edite sin tocar la configuracion cargada.</summary>
         public AppConfig Clone()
         {
-            return JsonSerializer.Deserialize<AppConfig>(JsonSerializer.Serialize(this, WriteOptions()), ReadOptions())
-                   ?? new AppConfig();
+            AppConfig c = JsonSerializer.Deserialize<AppConfig>(JsonSerializer.Serialize(this, WriteOptions()), ReadOptions())
+                          ?? new AppConfig();
+            c.Normalize();
+            return c;
         }
     }
 }

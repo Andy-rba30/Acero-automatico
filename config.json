@@ -19,8 +19,12 @@
   "stemVerticalBack":  { "enabled": true, "barTypeName": "7/8", "spacingMm": 200, "legMm": 900, "cutLengthMm": 0 },
   "stemVerticalFront": { "enabled": true, "barTypeName": "7/8", "spacingMm": 200, "legMm": 900, "cutLengthMm": 0 },
 
-  "stemHorizontalBack":  { "enabled": true, "barTypeName": "1/2", "spacingMm": 200 },
-  "stemHorizontalFront": { "enabled": true, "barTypeName": "1/2", "spacingMm": 200 },
+  "stemHorizontalBackEnabled": true,
+  "stemHorizontalFrontEnabled": true,
+  "stemZoneMode": "auto",
+  "stemHorizontalZones": [
+    { "topMm": 0, "sameBothFaces": true, "backBarTypeName": "1/2", "backSpacingMm": 200, "frontBarTypeName": "1/2", "frontSpacingMm": 200 }
+  ],
 
   "footingTransverseBottom": { "enabled": true, "barTypeName": "7/8", "spacingMm": 200, "legMm": 300 },
   "footingTransverseTop":    { "enabled": true, "barTypeName": "7/8", "spacingMm": 200, "legMm": 300 },
