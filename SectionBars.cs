@@ -154,13 +154,31 @@ namespace RetainingWallRebar
         }
 
         /// <summary>
-        /// Vertical del alzado de una cara: baja siguiendo la cara, se apoya sobre la
-        /// parrilla inferior y su patilla cruza bajo la pantalla hasta sobresalir LegMm de
-        /// la cara opuesta. null si esta desactivada.
+        /// Cota del eje de la patilla de una vertical: apoyada sobre transversal + longitudinal
+        /// inferiores y apilada por encima de las patillas que van debajo, en este orden:
+        /// vertical trasdos, vertical intrados, baston trasdos, baston intrados.
         /// </summary>
-        public static Poly Vertical(WallSection s, AppConfig cfg, bool back, Func<string, double> dia)
+        private static double HookLevel(AppConfig cfg, bool back, bool dowel, double db, Func<string, double> dia)
         {
-            BarFamilyCfg f = back ? cfg.StemVerticalBack : cfg.StemVerticalFront;
+            double v = Mm(cfg.CoverFootingBottomMm) + DbT(cfg, false, dia) + DbL(cfg, false, dia);
+            var below = new List<BarFamilyCfg>();
+            if (dowel) { below.Add(cfg.StemVerticalBack); below.Add(cfg.StemVerticalFront); if (!back) below.Add(cfg.StemDowelBack); }
+            else if (!back) below.Add(cfg.StemVerticalBack);
+            foreach (BarFamilyCfg f in below)
+                if (f.Enabled) v += dia(f.BarTypeName);
+            return v + db * 0.5;
+        }
+
+        /// <summary>
+        /// Vertical del alzado de una cara (o baston de arranque, dowel = true): baja
+        /// siguiendo la cara, se apoya sobre la parrilla inferior y su patilla cruza bajo la
+        /// pantalla hasta sobresalir LegMm de la cara opuesta. El baston se corta a
+        /// CutLengthMm sobre la zapata. null si esta desactivada.
+        /// </summary>
+        public static Poly Vertical(WallSection s, AppConfig cfg, bool back, Func<string, double> dia, bool dowel = false)
+        {
+            BarFamilyCfg f = dowel ? (back ? cfg.StemDowelBack : cfg.StemDowelFront)
+                                   : (back ? cfg.StemVerticalBack : cfg.StemVerticalFront);
             if (!f.Enabled) return null;
             double db = dia(f.BarTypeName);
             double cov = Mm(cfg.CoverStemMm);
@@ -170,13 +188,11 @@ namespace RetainingWallRebar
             double uAt(double v) => (useU0 ? s.FaceU0(v) : s.FaceU1(v)) + sign * (cov + db * 0.5);
 
             double vTop = s.LenV - Mm(cfg.CoverStemTopMm) - db * 0.5;
-            if (f.CutLengthMm > 0) vTop = Math.Min(vTop, s.FootingTop + Mm(f.CutLengthMm));
+            if (dowel) vTop = Math.Min(vTop, s.FootingTop + Mm(f.CutLengthMm));
+            else if (f.CutLengthMm > 0) vTop = Math.Min(vTop, s.FootingTop + Mm(f.CutLengthMm));
 
-            // patilla apoyada sobre transversal + longitudinal inferiores; la del intrados
-            // apilada sobre la del trasdos
-            double mesh = Mm(cfg.CoverFootingBottomMm) + DbT(cfg, false, dia) + DbL(cfg, false, dia);
-            double vBot = mesh + db * 0.5;
-            if (!back && cfg.StemVerticalBack.Enabled) vBot += dia(cfg.StemVerticalBack.BarTypeName);
+            double vBot = HookLevel(cfg, back, dowel, db, dia);
+            if (vTop <= vBot + 0.003) return null;
 
             // cruza hacia el lado contrario y sobresale LegMm de la cara opuesta del alzado
             double opposite = useU0 ? s.FaceU1(s.FootingTop) : s.FaceU0(s.FootingTop);

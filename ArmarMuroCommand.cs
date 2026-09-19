@@ -86,8 +86,8 @@ namespace RetainingWallRebar
                         try
                         {
                             res = item.Straight != null
-                                ? RebarGenerator.Build(doc, item.Host, item.Straight, cfg)
-                                : RebarGenerator.BuildCorner(doc, item.Host, item.Corner, cfg);
+                                ? RebarGenerator.Build(doc, item, cfg)
+                                : RebarGenerator.BuildCorner(doc, item, cfg);
                             if (res.Safe && res.Created.Count > 0)
                             {
                                 doc.Regenerate();
