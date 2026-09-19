@@ -78,6 +78,7 @@ namespace RetainingWallRebar
             StemVerticals(c, back: false);
             FootingTransverse(c, top: false);
             FootingTransverse(c, top: true);
+            FootingReinforcements(c);
             FootingLongitudinal(c, top: false);
             FootingLongitudinal(c, top: true);
             StemHorizontals(c, back: true);
@@ -153,6 +154,40 @@ namespace RetainingWallRebar
             if (curves.Count == 0) { c.Result.Failed.Add(name + ": geometria degenerada"); return; }
 
             Place(c, name, bt, s.DirW, curves, Mm(f.SpacingMm), wb - wa, Layout.ArrayIfLonger, true);
+        }
+
+        // =================================================================
+        // Refuerzos transversales cortos de zapata: barra recta en la capa de su
+        // transversal, intercalada media separacion con ella a lo largo del muro
+        // =================================================================
+        private static void FootingReinforcements(Ctx c)
+        {
+            WallSection s = c.S;
+            AppConfig cfg = c.Cfg;
+            if (cfg.FootingReinforcements == null) return;
+            int i = 0;
+            foreach (FootingReinfCfg r in cfg.FootingReinforcements)
+            {
+                i++;
+                string name = c.Plan.Label + "refuerzo zapata " + r.Describe + " #" + i;
+                double wa0 = c.Plan.TransW0, wb = c.Plan.TransW1;
+                if (wb < wa0) { c.Result.Failed.Add(name + ": no cabe en el tramo"); continue; }
+
+                RebarBarType bt = FindBarType(c.Doc, r.BarTypeName);
+                double otherDb = r.Top ? c.Plan.OtherTransverseTopDb : c.Plan.OtherTransverseBottomDb;
+                SectionBars.Poly p = SectionBars.Reinforcement(s, cfg, r, Dia(c), out string warn, c.Plan.SwapFootingLayers, otherDb);
+                if (p == null) { c.Result.Failed.Add(name + ": " + warn); continue; }
+
+                // intercalado media separacion con la transversal de su capa
+                BarFamilyCfg tr = r.Top ? cfg.FootingTransverseTop : cfg.FootingTransverseBottom;
+                double shift = Mm(tr.Enabled ? tr.SpacingMm : r.SpacingMm) * 0.5;
+                double wa = wa0 + shift;
+                if (wb - wa < -MinSeg) { c.Result.Failed.Add(name + ": no cabe en el tramo"); continue; }
+
+                List<Curve> curves = Curves(s, p, wa);
+                if (curves.Count == 0) { c.Result.Failed.Add(name + ": geometria degenerada"); continue; }
+                Place(c, name, bt, s.DirW, curves, Mm(r.SpacingMm), Math.Max(0, wb - wa), Layout.ArrayIfLonger, true);
+            }
         }
 
         // =================================================================

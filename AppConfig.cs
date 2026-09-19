@@ -59,6 +59,36 @@ namespace RetainingWallRebar
         public double SpacingFor(bool back) => back || SameBothFaces ? BackSpacingMm : FrontSpacingMm;
     }
 
+    /// <summary>
+    /// Refuerzo transversal corto de zapata (barra recta en la capa de su transversal,
+    /// intercalada media separacion con ella). Posicion:
+    ///  "toe"    = puntera: desde el borde de la zapata hacia dentro, LengthMm.
+    ///  "heel"   = talon: idem desde el borde del talon.
+    ///  "center" = centrado en la pantalla: ToeLengthMm hacia la puntera y HeelLengthMm
+    ///             hacia el talon, medidos desde el eje de la pantalla en su base.
+    /// </summary>
+    public class FootingReinfCfg
+    {
+        public bool Top { get; set; } = true;
+        public string Position { get; set; } = "center";
+        public string BarTypeName { get; set; } = "";
+        public double SpacingMm { get; set; } = 200;
+        /// <summary>Puntera / talon: longitud desde el borde de la zapata (mm).</summary>
+        public double LengthMm { get; set; } = 1500;
+        /// <summary>Centro: longitudes desde el eje de la pantalla hacia cada lado (mm).</summary>
+        public double ToeLengthMm { get; set; } = 1300;
+        public double HeelLengthMm { get; set; } = 1300;
+
+        public FootingReinfCfg Clone() => (FootingReinfCfg)MemberwiseClone();
+
+        [JsonIgnore] public bool IsToe => string.Equals((Position ?? "").Trim(), "toe", StringComparison.OrdinalIgnoreCase);
+        [JsonIgnore] public bool IsHeel => string.Equals((Position ?? "").Trim(), "heel", StringComparison.OrdinalIgnoreCase);
+        [JsonIgnore] public bool IsCenter => !IsToe && !IsHeel;
+
+        [JsonIgnore]
+        public string Describe => (Top ? "superior" : "inferior") + " " + (IsToe ? "puntera" : IsHeel ? "talon" : "centro");
+    }
+
     public class AppConfig
     {
         // --- recubrimientos (mm) ---
@@ -91,6 +121,9 @@ namespace RetainingWallRebar
 
         /// <summary>Tramos de abajo arriba (1 a 3). Cada uno con su tipo de barra y separacion por cara.</summary>
         public List<StemZoneCfg> StemHorizontalZones { get; set; } = new List<StemZoneCfg>();
+
+        /// <summary>Refuerzos transversales cortos de zapata (lista, puede estar vacia).</summary>
+        public List<FootingReinfCfg> FootingReinforcements { get; set; } = new List<FootingReinfCfg>();
 
         /// <summary>Claves antiguas (una sola familia por cara); al cargar se convierten en un tramo unico.</summary>
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
@@ -215,6 +248,8 @@ namespace RetainingWallRebar
             }
             StemHorizontalBack = null;
             StemHorizontalFront = null;
+            if (FootingReinforcements == null) FootingReinforcements = new List<FootingReinfCfg>();
+            FootingReinforcements.RemoveAll(r => r == null);
             if (!StemZoneModeManual) StemZoneMode = "auto";
         }
 

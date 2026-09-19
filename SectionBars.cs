@@ -107,6 +107,53 @@ namespace RetainingWallRebar
         }
 
         /// <summary>
+        /// Refuerzo transversal corto de zapata: barra recta en la capa de su transversal.
+        /// Puntera / talon: desde el borde de la zapata hacia dentro. Centro: desde el eje
+        /// de la pantalla en su base, hacia cada lado. Se acota al ancho util de la zapata.
+        /// </summary>
+        public static Poly Reinforcement(WallSection s, AppConfig cfg, FootingReinfCfg r, Func<string, double> dia,
+                                         out string warning, bool swap = false, double otherTransDb = 0)
+        {
+            warning = null;
+            double db = dia(r.BarTypeName);
+            double dbT = DbT(cfg, r.Top, dia);
+            if (dbT <= 0) dbT = db;   // sin transversal en esa capa, el refuerzo ocupa su sitio
+            FootingLevels(s, cfg, r.Top, dbT, DbL(cfg, r.Top, dia), swap, otherTransDb, out double v, out _);
+
+            double lim0 = Mm(cfg.CoverFootingSideMm) + db * 0.5, lim1 = s.LenU - lim0;
+            double ua, ub;
+            bool heelAtU0 = s.HeelAtU0;
+            if (r.IsCenter)
+            {
+                double axis = (s.FaceU0(s.FootingTop) + s.FaceU1(s.FootingTop)) * 0.5;
+                double half = (s.FaceU1(s.FootingTop) - s.FaceU0(s.FootingTop)) * 0.5;
+                double toe = Mm(r.ToeLengthMm), heel = Mm(r.HeelLengthMm);
+                // la puntera esta al lado contrario del talon
+                ua = heelAtU0 ? axis - heel : axis - toe;
+                ub = heelAtU0 ? axis + toe : axis + heel;
+                if (toe < half || heel < half)
+                    warning = "refuerzo " + r.Describe + ": una longitud es menor que medio espesor de la pantalla (" +
+                              WallSection.ToMm(half) + " mm) y la barra no asoma por esa cara";
+            }
+            else
+            {
+                double len = Mm(r.LengthMm);
+                bool fromU0 = r.IsHeel ? heelAtU0 : !heelAtU0;   // borde desde el que se mide
+                if (fromU0) { ua = lim0; ub = lim0 + len; }
+                else { ub = lim1; ua = lim1 - len; }
+            }
+            double a = Math.Max(ua, lim0), b = Math.Min(ub, lim1);
+            if (b - a < Mm(50)) { warning = "refuerzo " + r.Describe + ": longitud no valida"; return null; }
+            if (a > ua + 0.003 || b < ub - 0.003)
+                warning = warning ?? "refuerzo " + r.Describe + ": se acorta al ancho util de la zapata";
+
+            var p = new Poly { Db = db };
+            p.Pts.Add((a, v));
+            p.Pts.Add((b, v));
+            return p;
+        }
+
+        /// <summary>
         /// Vertical del alzado de una cara: baja siguiendo la cara, se apoya sobre la
         /// parrilla inferior y su patilla cruza bajo la pantalla hasta sobresalir LegMm de
         /// la cara opuesta. null si esta desactivada.

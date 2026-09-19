@@ -32,6 +32,8 @@
   "footingLongitudinalBottom": { "enabled": true, "barTypeName": "1/2", "spacingMm": 200 },
   "footingLongitudinalTop":    { "enabled": true, "barTypeName": "1/2", "spacingMm": 200 },
 
+  "footingReinforcements": [],
+
   "sectionOverrides": {
     "Muro de contencion perimetral": { "footingThicknessMm": 600, "flipAxis": false },
     "Muro de contencion esquinero":  { "footingThicknessMm": 600, "flipAxis": false }

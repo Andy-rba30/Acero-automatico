@@ -187,6 +187,7 @@ namespace RetainingWallRebar
         }
 
         private static readonly Brush BarBrush = new SolidColorBrush(Color.FromRgb(0x50, 0x50, 0x50));
+        private static readonly Brush ReinfBrush = new SolidColorBrush(Color.FromRgb(0x1F, 0x3A, 0x8A));
 
         /// <summary>
         /// Verticales (linea por cara con su patilla), transversales de zapata (linea con
@@ -226,6 +227,25 @@ namespace RetainingWallRebar
                     SetLeft(dot, X(l.UAt(i)) - r);
                     SetTop(dot, Y(l.V) - r);
                     Children.Add(dot);
+                }
+            }
+
+            // refuerzos cortos, en azul oscuro para distinguirlos de la transversal
+            if (_cfg.FootingReinforcements != null)
+            {
+                int i = 0;
+                foreach (FootingReinfCfg r in _cfg.FootingReinforcements)
+                {
+                    i++;
+                    SectionBars.Poly p = SectionBars.Reinforcement(_s, _cfg, r, _diameterFt, out _);
+                    if (p == null) continue;
+                    string len = r.IsCenter
+                        ? r.ToeLengthMm.ToString("0") + " hacia puntera + " + r.HeelLengthMm.ToString("0") + " hacia talon desde el eje"
+                        : r.LengthMm.ToString("0") + " mm desde el borde";
+                    Polyline pl = Bar(ToPts(p), p.Db * k + 1, "Refuerzo zapata " + r.Describe + " #" + i + ": " + r.BarTypeName +
+                                      " @" + r.SpacingMm.ToString("0") + " mm, " + len);
+                    pl.Stroke = ReinfBrush;
+                    Children.Add(pl);
                 }
             }
 

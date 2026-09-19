@@ -143,9 +143,13 @@ Al lanzar el comando con uno o varios muros seleccionados se abre una ventana:
    está activa, el **tipo de barra** (desplegable con los `RebarBarType` cargados
    en el proyecto; se puede escribir un nombre parcial), la separación, la
    patilla/pata donde aplica y la longitud de bastón en las verticales.
-4. **Recubrimientos** y **opciones**: horizontales por bandas, ala pasante por
+4. **Refuerzos transversales de zapata**: tabla con un refuerzo por fila (capa,
+   posición puntera/talón/centro, tipo, separación y longitudes) con botones
+   para añadir y quitar; los avisos (longitud que no asoma de la pantalla,
+   barra acortada al ancho de la zapata) aparecen debajo.
+5. **Recubrimientos** y **opciones**: horizontales por bandas, ala pasante por
    defecto, pata de solape en esquina y malla de zapata en el bloque.
-5. **Armar** crea la armadura con esos valores solo para esta ejecución.
+6. **Armar** crea la armadura con esos valores solo para esta ejecución.
    **Guardar como valores por defecto** los escribe en el `config.json` que está
    junto a la DLL, de modo que la próxima vez la ventana arranque con ellos.
    (Compilar en Debug vuelve a copiar el `config.json` del proyecto encima.)
@@ -223,6 +227,21 @@ posición en coordenadas locales del muro (del ala, en un esquinero).
 | Transversal inferior de zapata | capa exterior, con patas verticales hacia arriba en los extremos |
 | Transversal superior de zapata | ídem hacia abajo, con las patas por dentro de las de la inferior |
 | Reparto longitudinal de zapata ×2 capas | por dentro del transversal y de sus patas; una barra definida + array en el ancho |
+
+Además, una lista opcional de **refuerzos transversales cortos de zapata**
+(`footingReinforcements`): barras rectas en la capa de la transversal superior o
+inferior, intercaladas media separación con ella, en tres posiciones:
+
+- `"toe"` (puntera) y `"heel"` (talón): `lengthMm` medido desde el borde de la
+  zapata hacia dentro (con el recubrimiento lateral); si es mayor que el vuelo,
+  pasa bajo la pantalla.
+- `"center"`: `toeLengthMm` hacia la puntera y `heelLengthMm` hacia el talón,
+  medidos desde el eje de la pantalla en su base. Para 600 de pantalla y 1000 a
+  cada cara: 1300 y 1300.
+
+Cada refuerzo lleva `top` (capa), `barTypeName` y `spacingMm`. En la ventana se
+añaden y quitan con botones; el esquema los dibuja en azul oscuro. En los
+esquineros siguen las mismas reglas de bloque de esquina que las transversales.
 
 La geometría en sección de estas familias está en `SectionBars`, que usan tanto
 el generador como el esquema de la ventana.

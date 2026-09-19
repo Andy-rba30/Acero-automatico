@@ -49,7 +49,18 @@ namespace RetainingWallRebar
             public List<UIElement> Cells = new List<UIElement>();
         }
 
+        private sealed class ReinfRow
+        {
+            public FootingReinfCfg Cfg;
+            public ComboBox Layer, Position, Type;
+            public TextBox Spacing, L1, L2;
+        }
+
         private readonly List<FamilyRow> _rows = new List<FamilyRow>();
+        private readonly List<FootingReinfCfg> _reinfStore = new List<FootingReinfCfg>();
+        private readonly List<ReinfRow> _reinfRows = new List<ReinfRow>();
+        private Grid _reinfGrid;
+        private TextBlock _reinfMessage;
         private TextBox _covStem, _covStemTop, _covFootTop, _covFootBot, _covFootSide, _covEnd;
         private TextBox _band, _lapDia, _lapMin;
         private ComboBox _through, _mesh;
@@ -82,6 +93,8 @@ namespace RetainingWallRebar
             _barTypes = barTypes;
             _diametersMm = diametersMm;
             _items = items;
+
+            foreach (FootingReinfCfg r in _cfg.FootingReinforcements) _reinfStore.Add(r.Clone());
 
             List<StemZoneCfg> zones = _cfg.StemHorizontalZones;
             _zoneCount = Math.Max(1, Math.Min(3, zones.Count));
@@ -121,6 +134,7 @@ namespace RetainingWallRebar
             var body = new StackPanel();
             body.Children.Add(BuildZones());
             body.Children.Add(BuildFamilies());
+            body.Children.Add(BuildReinforcements());
 
             var two = new Grid { Margin = new Thickness(0, 6, 0, 0) };
             two.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -529,6 +543,7 @@ namespace RetainingWallRebar
             {
                 foreach (ZoneRow row in _zoneRows) { row.Height.Text = "-"; row.Bars.Text = "-"; }
                 _zoneMessage.Text = "";
+                if (_reinfMessage != null) _reinfMessage.Text = "";
                 _previewCaption.Text = "Esquema: sin elemento armable";
                 _preview.Clear("Sin elemento armable");
                 return;
@@ -550,6 +565,14 @@ namespace RetainingWallRebar
                 string f = z.Front != null ? z.Front.Heights.Count.ToString() : "-";
                 row.Bars.Text = (z.Cfg.SameBothFaces && z.Back != null && z.Front != null) ? b : b + " / " + f;
             }
+
+            var rmsgs = new List<string>();
+            foreach (FootingReinfCfg r in scratch.FootingReinforcements)
+            {
+                SectionBars.Reinforcement(s, scratch, r, DiameterFt, out string warn);
+                if (warn != null) rmsgs.Add(warn);
+            }
+            if (_reinfMessage != null) _reinfMessage.Text = string.Join(Environment.NewLine, rmsgs);
 
             _previewCaption.Text = "Esquema: " + _selected.Tag.Trim() + (_selected.Corner != null ? " (ala 1)" : "");
             _preview.Show(s, scratch, layout, DiameterFt);
@@ -660,6 +683,176 @@ namespace RetainingWallRebar
             row.Cut.TextChanged += (s, e) => Refresh();
 
             _rows.Add(row);
+        }
+
+        // ------------------------------------------------------------------
+        // Refuerzos transversales cortos de zapata
+        // ------------------------------------------------------------------
+        private UIElement BuildReinforcements()
+        {
+            var group = new GroupBox { Header = "Refuerzos transversales de zapata (barras cortas)", Padding = new Thickness(4), Margin = new Thickness(0, 6, 0, 0) };
+            var panel = new StackPanel();
+
+            _reinfGrid = new Grid();
+            for (int c = 0; c < 7; c++)
+                _reinfGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            _reinfGrid.ColumnDefinitions[2].Width = new GridLength(1, GridUnitType.Star);
+            panel.Children.Add(_reinfGrid);
+            RebuildReinfTable();
+
+            var add = new Button { Content = "Anadir refuerzo", Padding = new Thickness(10, 3, 10, 3), Margin = new Thickness(4, 6, 4, 2), HorizontalAlignment = HorizontalAlignment.Left };
+            add.Click += (s, e) =>
+            {
+                ReadReinfRows(null);
+                var last = _reinfStore.Count > 0 ? _reinfStore[_reinfStore.Count - 1].Clone() : new FootingReinfCfg();
+                if (_reinfStore.Count == 0) last.BarTypeName = _cfg.FootingTransverseTop.BarTypeName;
+                _reinfStore.Add(last);
+                _building = true; RebuildReinfTable(); _building = false;
+                Refresh();
+            };
+            panel.Children.Add(add);
+
+            _reinfMessage = new TextBlock { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(4, 2, 4, 0), Foreground = Brushes.Firebrick };
+            panel.Children.Add(_reinfMessage);
+            panel.Children.Add(new TextBlock
+            {
+                Text = "Barras rectas en la misma capa que la transversal superior o inferior, intercaladas media separacion con ella. " +
+                       "Puntera y talon: longitud medida desde el borde de la zapata hacia dentro (puede pasar bajo la pantalla). " +
+                       "Centro: longitud hacia la puntera y hacia el talon medidas desde el eje de la pantalla en su base. " +
+                       "Con una separacion distinta a la de la transversal alguna barra puede coincidir con otra.",
+                TextWrapping = TextWrapping.Wrap,
+                Foreground = Brushes.DimGray,
+                Margin = new Thickness(4, 4, 4, 0)
+            });
+            group.Content = panel;
+            return group;
+        }
+
+        private void RebuildReinfTable()
+        {
+            _reinfGrid.Children.Clear();
+            _reinfGrid.RowDefinitions.Clear();
+            _reinfRows.Clear();
+
+            string[] headers = { "Capa", "Posicion", "Tipo de barra", "Separacion (mm)", "Longitud 1 (mm)", "Longitud 2 (mm)", "" };
+            _reinfGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            for (int c = 0; c < headers.Length; c++)
+            {
+                var h = new TextBlock { Text = headers[c], FontWeight = FontWeights.Bold, Margin = Pad };
+                Grid.SetRow(h, 0); Grid.SetColumn(h, c);
+                _reinfGrid.Children.Add(h);
+            }
+            if (_reinfStore.Count == 0)
+            {
+                _reinfGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+                var none = new TextBlock { Text = "Sin refuerzos. Pulsa \"Anadir refuerzo\" para crear uno.", Foreground = Brushes.DimGray, Margin = Pad };
+                Grid.SetRow(none, 1); Grid.SetColumn(none, 0); Grid.SetColumnSpan(none, 7);
+                _reinfGrid.Children.Add(none);
+            }
+
+            foreach (FootingReinfCfg cfg in _reinfStore)
+            {
+                int r = _reinfGrid.RowDefinitions.Count;
+                _reinfGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+                var row = new ReinfRow { Cfg = cfg };
+
+                row.Layer = new ComboBox { Margin = Pad, MinWidth = 90 };
+                row.Layer.Items.Add("Superior");
+                row.Layer.Items.Add("Inferior");
+                row.Layer.SelectedIndex = cfg.Top ? 0 : 1;
+                row.Layer.SelectionChanged += (s, e) => Refresh();
+                Put(row.Layer, r, 0);
+
+                row.Position = new ComboBox { Margin = Pad, MinWidth = 90 };
+                row.Position.Items.Add("Puntera");
+                row.Position.Items.Add("Talon");
+                row.Position.Items.Add("Centro");
+                row.Position.SelectedIndex = cfg.IsToe ? 0 : cfg.IsHeel ? 1 : 2;
+                Put(row.Position, r, 1);
+
+                row.Type = TypeBox(cfg.BarTypeName);
+                Put(row.Type, r, 2);
+
+                row.Spacing = NumBox(cfg.SpacingMm);
+                row.Spacing.TextChanged += (s, e) => Refresh();
+                Put(row.Spacing, r, 3);
+
+                row.L1 = NumBox(cfg.IsCenter ? cfg.ToeLengthMm : cfg.LengthMm);
+                row.L1.TextChanged += (s, e) => Refresh();
+                Put(row.L1, r, 4);
+
+                row.L2 = NumBox(cfg.HeelLengthMm);
+                row.L2.TextChanged += (s, e) => Refresh();
+                Put(row.L2, r, 5);
+
+                var remove = new Button { Content = "Quitar", Padding = new Thickness(8, 2, 8, 2), Margin = Pad };
+                FootingReinfCfg captured = cfg;
+                remove.Click += (s, e) =>
+                {
+                    ReadReinfRows(null);
+                    _reinfStore.Remove(captured);
+                    _building = true; RebuildReinfTable(); _building = false;
+                    Refresh();
+                };
+                Put(remove, r, 6);
+
+                ReinfRow rowRef = row;
+                row.Position.SelectionChanged += (s, e) =>
+                {
+                    // al cambiar de posicion, las cajas de longitud cambian de significado
+                    bool center = rowRef.Position.SelectedIndex == 2;
+                    FootingReinfCfg c = rowRef.Cfg;
+                    rowRef.L1.Text = Fmt(center ? c.ToeLengthMm : c.LengthMm);
+                    UpdateReinfRowState(rowRef);
+                    Refresh();
+                };
+                UpdateReinfRowState(row);
+                _reinfRows.Add(row);
+            }
+        }
+
+        private void Put(UIElement el, int r, int c)
+        {
+            Grid.SetRow(el, r); Grid.SetColumn(el, c);
+            _reinfGrid.Children.Add(el);
+        }
+
+        private static void UpdateReinfRowState(ReinfRow row)
+        {
+            bool center = row.Position.SelectedIndex == 2;
+            row.L2.IsEnabled = center;
+            row.L1.ToolTip = center ? "Hacia la puntera, desde el eje de la pantalla en su base" : "Desde el borde de la zapata hacia dentro";
+            row.L2.ToolTip = center ? "Hacia el talon, desde el eje de la pantalla en su base" : "Solo en posicion Centro";
+        }
+
+        /// <summary>Vuelca la tabla de refuerzos en _reinfStore. errors puede ser null (lectura tolerante).</summary>
+        private void ReadReinfRows(List<string> errors)
+        {
+            int i = 0;
+            foreach (ReinfRow row in _reinfRows)
+            {
+                i++;
+                FootingReinfCfg c = row.Cfg;
+                string name = "Refuerzo " + i;
+                c.Top = row.Layer.SelectedIndex == 0;
+                c.Position = row.Position.SelectedIndex == 0 ? "toe" : row.Position.SelectedIndex == 1 ? "heel" : "center";
+
+                string type = (row.Type.Text ?? "").Trim();
+                if (type.Length > 0) c.BarTypeName = type;
+                else errors?.Add(name + ": elige un tipo de barra");
+                if (TryParse(row.Spacing.Text, out double sp) && sp >= 1) c.SpacingMm = sp;
+                else errors?.Add(name + ": separacion no valida");
+
+                bool okL1 = TryParse(row.L1.Text, out double l1) && l1 > 0;
+                if (!okL1) errors?.Add(name + ": longitud 1 no valida");
+                if (c.IsCenter)
+                {
+                    if (okL1) c.ToeLengthMm = l1;
+                    if (TryParse(row.L2.Text, out double l2) && l2 > 0) c.HeelLengthMm = l2;
+                    else errors?.Add(name + ": longitud 2 no valida");
+                }
+                else if (okL1) c.LengthMm = l1;
+            }
         }
 
         private UIElement BuildCovers()
@@ -872,6 +1065,10 @@ namespace RetainingWallRebar
                 if (row.HasLeg && TryNum(row.Leg, row.Name + ", patilla", 0, errors, out v)) fam.LegMm = v;
                 if (row.HasCut && TryNum(row.Cut, row.Name + ", baston", 0, errors, out v)) fam.CutLengthMm = v;
             }
+
+            // refuerzos de zapata
+            ReadReinfRows(errors);
+            target.FootingReinforcements = _reinfStore.Select(r => r.Clone()).ToList();
 
             // horizontales por tramos
             target.StemHorizontalBackEnabled = _backOn.IsChecked == true;
