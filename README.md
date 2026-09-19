@@ -131,8 +131,11 @@ Al lanzar el comando con uno o varios muros seleccionados se abre una ventana:
    fila, igual que en el esquema): cota superior, altura resultante, tipo de
    barra y separación por cara, y número de barras por cara. A la derecha, el
    **esquema** de la sección real del muro marcado: hormigón, una banda de color
-   por tramo, las cotas de los límites y cada barra como un punto a su altura y
-   con su diámetro. Se redibuja con cada cambio; al pasar el ratón por una fila
+   por tramo, las cotas de los límites y cada barra horizontal como un punto a
+   su altura y con su diámetro. En gris, el resto del armado tal y como se
+   creará: las verticales con su patilla (y su bastón si lo hay), las
+   transversales de zapata con sus patas y las longitudinales de zapata como
+   puntos. Se redibuja con cada cambio; al pasar el ratón por una fila
    se resalta su tramo, y cada punto muestra su tramo, tipo y cota. Debajo de
    la tabla aparecen los avisos (tramo sin barras, cota fuera de la altura,
    cotas no crecientes).
