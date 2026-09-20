@@ -379,7 +379,6 @@ namespace RetainingWallRebar
                     p.CornerU0 = MakeCorner(cfg, s, o, layouts[1 - k], outerIsU0 ? otherOuterIsU0 : !otherOuterIsU0, diameterFt);
                     p.CornerU1 = MakeCorner(cfg, s, o, layouts[1 - k], outerIsU0 ? !otherOuterIsU0 : otherOuterIsU0, diameterFt);
                 }
-                p.ShiftHorizontals = k != through;
 
                 // --- zapata ---
                 double full = s.LenW + s.BlockLen - cov;
@@ -461,9 +460,6 @@ namespace RetainingWallRebar
 
         /// <summary>Reparto de horizontales ya resuelto para este tramo (null = resolverlo al armar).</summary>
         public ZoneLayout Zones;
-
-        /// <summary>Sube los horizontales un diametro para que no se crucen con las patas del otro ala.</summary>
-        public bool ShiftHorizontals;
 
         /// <summary>Malla de zapata con las capas intercambiadas (longitudinales fuera, transversales dentro).</summary>
         public bool SwapFootingLayers;
