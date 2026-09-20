@@ -583,11 +583,22 @@ namespace RetainingWallRebar
             return _selected.Straight ?? _selected.Corner.Wings[0];
         }
 
-        /// <summary>Diametro (pies) del tipo de barra; 0 si el nombre no existe en el proyecto (nunca otro tipo a escondidas).</summary>
+        /// <summary>Diametro provisional (mm) con el que el esquema dibuja una familia sin tipo de barra elegido.</summary>
+        private const double PlaceholderMm = 12;
+        /// <summary>true si en el ultimo redibujo alguna familia activa se dibujo con el diametro provisional.</summary>
+        private bool _placeholderUsed;
+
+        /// <summary>
+        /// Diametro (pies) del tipo de barra. Sin tipo (vacio o inexistente en el proyecto) el
+        /// esquema usa un diametro provisional y lo avisa: la familia sigue viendose, y armar
+        /// queda bloqueado hasta elegir un tipo real. Nunca se sustituye por otro tipo.
+        /// </summary>
         private double DiameterFt(string name)
         {
             string match = RebarGenerator.MatchName(_barTypes, name);
-            return match != null && _diametersMm.TryGetValue(match, out double mm) ? WallSection.Mm(mm) : 0;
+            if (match != null && _diametersMm.TryGetValue(match, out double mm)) return WallSection.Mm(mm);
+            _placeholderUsed = true;
+            return WallSection.Mm(PlaceholderMm);
         }
 
         /// <summary>Recalcula el reparto con lo que hay en pantalla, actualiza la tabla y redibuja el esquema.</summary>
@@ -603,6 +614,7 @@ namespace RetainingWallRebar
         {
             var scratch = _cfg.Clone();
             ReadUi(scratch, null);
+            _placeholderUsed = false;
 
             WallSection s = SelectedSection();
             if (s == null)
@@ -671,8 +683,9 @@ namespace RetainingWallRebar
             }
             _familyMessage.Text = string.Join(Environment.NewLine, fmsgs);
 
-            _previewCaption.Text = "Esquema: " + _selected.Tag.Trim() + (_selected.Corner != null ? " (ala 1)" : "");
             _preview.Show(s, scratch, layout, DiameterFt);
+            _previewCaption.Text = "Esquema: " + _selected.Tag.Trim() + (_selected.Corner != null ? " (ala 1)" : "") +
+                                   (_placeholderUsed ? "   (familias sin tipo de barra: dibujadas con " + PlaceholderMm + " mm provisionales)" : "");
         }
 
         // ------------------------------------------------------------------
