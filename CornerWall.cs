@@ -331,15 +331,19 @@ namespace RetainingWallRebar
             }
             int stemThrough = reachesFar[through] ? through : (reachesFar[1 - through] ? 1 - through : -1);
 
-            // reparto de horizontales de cada ala (los del ala no pasante suben un diametro; con
-            // malla cruzada sus patillas quedan mas altas y las barras que bajan a la zapata lo saben)
+            // reparto de horizontales de cada ala: las dos arrancan sobre la patilla mas alta de
+            // las dos zapatas (con malla cruzada las del ala no pasante quedan mas altas) y el ala
+            // no pasante sube un diametro para que sus patas se apilen sobre las barras de la otra
             Func<string, double> diameterFt = n => RebarGenerator.FindBarType(doc, n).BarNominalDiameter;
             double transBottomDb = cfg.FootingTransverseBottom.Enabled ? diameterFt(cfg.FootingTransverseBottom.BarTypeName) : 0;
+            double bottomLimit = double.MinValue;
+            for (int k = 0; k < 2; k++)
+                bottomLimit = Math.Max(bottomLimit, SectionBars.StemBottomLimit(Wings[k], cfg, diameterFt, cfg.CornerFootingMeshBoth && k != through, transBottomDb));
             var layouts = new ZoneLayout[2];
             for (int k = 0; k < 2; k++)
             {
                 bool swap = cfg.CornerFootingMeshBoth && k != through;
-                layouts[k] = StemZones.Resolve(Wings[k], cfg, diameterFt, k != through, swap, transBottomDb);
+                layouts[k] = StemZones.Resolve(Wings[k], cfg, diameterFt, k == through ? WingRole.Through : WingRole.Other, swap, transBottomDb, bottomLimit);
             }
 
             var plans = new WingPlan[2];
@@ -375,7 +379,6 @@ namespace RetainingWallRebar
                     p.CornerU0 = MakeCorner(cfg, s, o, layouts[1 - k], outerIsU0 ? otherOuterIsU0 : !otherOuterIsU0, diameterFt);
                     p.CornerU1 = MakeCorner(cfg, s, o, layouts[1 - k], outerIsU0 ? !otherOuterIsU0 : otherOuterIsU0, diameterFt);
                 }
-                p.ShiftHorizontals = k != through;
 
                 // --- zapata ---
                 double full = s.LenW + s.BlockLen - cov;
@@ -457,9 +460,6 @@ namespace RetainingWallRebar
 
         /// <summary>Reparto de horizontales ya resuelto para este tramo (null = resolverlo al armar).</summary>
         public ZoneLayout Zones;
-
-        /// <summary>Sube los horizontales un diametro para que no se crucen con las patas del otro ala.</summary>
-        public bool ShiftHorizontals;
 
         /// <summary>Malla de zapata con las capas intercambiadas (longitudinales fuera, transversales dentro).</summary>
         public bool SwapFootingLayers;

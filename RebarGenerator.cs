@@ -42,7 +42,7 @@ namespace RetainingWallRebar
         /// <summary>Longitud de barra que se tolera fuera del solido al comprobar (pies, ~1 mm).</summary>
         private const double InsideTol = 0.0033;
 
-        private enum Layout { Single, ArrayIfLonger, Array }
+        private enum Layout { Single, ArrayIfLonger, Array, FixedCount }
 
         private sealed class Ctx
         {
@@ -230,13 +230,14 @@ namespace RetainingWallRebar
         }
 
         // =================================================================
-        // Reparto horizontal del alzado, por tramos de altura (StemZones). El alzado
-        // va en talud, asi que o bien se coloca barra a barra (exacto) o por bandas
-        // (menos elementos). Las barras del tramo inferior que bajan a la zapata van
-        // siempre barra a barra. Cada barra se apoya en la vertical de su cara o, a la
-        // altura de un baston apilado, en el baston (SectionBars.HorizontalOffset). En
-        // un esquinero la barra gira la esquina con una pata de solape sobre la linea
-        // de barra de la otra ala (CornerFace).
+        // Reparto horizontal del alzado, por tramos de altura (StemZones, separacion
+        // maxima entre las patillas). El alzado va en talud, asi que o bien se coloca
+        // barra a barra (exacto) o por bandas: grupos de barras consecutivas de altura
+        // <= banda, cada uno un array con la separacion real y el numero de barras
+        // fijado, asi las cotas son las del esquema. Cada barra se apoya en la vertical
+        // de su cara o, a la altura de un baston apilado, en el baston
+        // (SectionBars.HorizontalOffset). En un esquinero la barra gira la esquina con
+        // una pata de solape sobre la linea de barra de la otra ala (CornerFace).
         // =================================================================
         private static void StemHorizontals(Ctx c, bool back)
         {
@@ -246,7 +247,7 @@ namespace RetainingWallRebar
             string name = c.Plan.Label + "horizontal alzado " + (back ? "trasdos" : "intrados");
 
             Func<string, double> dia = Dia(c);
-            ZoneLayout layout = c.Plan.Zones ?? StemZones.Resolve(s, cfg, dia, c.Plan.ShiftHorizontals, c.Plan.SwapFootingLayers, c.Plan.OtherTransverseBottomDb);
+            ZoneLayout layout = c.Plan.Zones ?? StemZones.Resolve(s, cfg, dia, WingRole.Straight, c.Plan.SwapFootingLayers, c.Plan.OtherTransverseBottomDb);
             if (layout.Error != null) { c.Result.Failed.Add(name + ": " + layout.Error); return; }
 
             bool useU0 = back ? s.HeelAtU0 : !s.HeelAtU0;
@@ -280,38 +281,28 @@ namespace RetainingWallRebar
                     return cl;
                 }
 
-                if (band <= MinSeg)
+                // barras por grupo: las que caben en una banda con la separacion real (1 = barra a barra)
+                int per = band <= MinSeg || f.RealSpacing <= MinSeg ? 1 : (int)Math.Floor(band / f.RealSpacing + 1e-9) + 1;
+                for (int i = 0; i < f.Heights.Count; i += per)
                 {
-                    foreach (double v in f.Heights)
+                    int m = Math.Min(per, f.Heights.Count - i);
+                    double v0 = f.Heights[i], v1 = f.Heights[i + m - 1];
+                    if (m == 1)
                     {
-                        List<Curve> cl = BarAt(v);
-                        if (cl == null) continue;
+                        List<Curve> one = BarAt(v0);
+                        if (one == null) continue;
                         any = true;
-                        Place(c, zname + " v=" + ToMm(v) + " mm", bt, s.DirV, cl, 0, 0, Layout.Single, true);
+                        Place(c, zname + " v=" + ToMm(v0) + " mm", bt, s.DirV, one, 0, 0, Layout.Single, true);
+                        continue;
                     }
-                }
-                else
-                {
-                    // las que bajan a la zapata, barra a barra; el resto por bandas desde VStart
-                    for (int i = 0; i < f.FootingCount; i++)
-                    {
-                        List<Curve> cl = BarAt(f.Heights[i]);
-                        if (cl == null) continue;
-                        any = true;
-                        Place(c, zname + " v=" + ToMm(f.Heights[i]) + " mm", bt, s.DirV, cl, 0, 0, Layout.Single, true);
-                    }
-                    for (double v = f.VStart; v <= f.VEnd; v += band)
-                    {
-                        double vHi = Math.Min(v + band, f.VEnd);
-                        double vMid = (v + vHi) * 0.5;
-                        List<Curve> cl = BarAt(vMid);
-                        if (cl == null) continue;
-                        any = true;
-                        // la barra de definicion va en la base de la banda: se desplaza desde vMid
-                        Transform down = Transform.CreateTranslation(s.DirV * (v - vMid));
-                        cl = cl.Select(cv => cv.CreateTransformed(down)).ToList();
-                        Place(c, zname + " banda v=" + ToMm(v) + " mm", bt, s.DirV, cl, f.Spacing, vHi - v, Layout.Array, false);
-                    }
+                    double vMid = (v0 + v1) * 0.5;
+                    List<Curve> cl = BarAt(vMid);
+                    if (cl == null) continue;
+                    any = true;
+                    // la barra de definicion va en la base del grupo: se desplaza desde vMid
+                    Transform down = Transform.CreateTranslation(s.DirV * (v0 - vMid));
+                    cl = cl.Select(cv => cv.CreateTransformed(down)).ToList();
+                    Place(c, zname + " banda v=" + ToMm(v0) + " mm", bt, s.DirV, cl, f.RealSpacing, v1 - v0, Layout.FixedCount, true, m);
                 }
             }
             if (!any) c.Result.Failed.Add(name + ": no cabe ninguna barra en el tramo");
@@ -327,11 +318,12 @@ namespace RetainingWallRebar
         /// rechazada y no crea nada.
         /// </summary>
         private static void Place(Ctx c, string name, RebarBarType bt, XYZ normal, List<Curve> curves,
-                                  double spacing, double length, Layout layout, bool includeLast)
+                                  double spacing, double length, Layout layout, bool includeLast, int count = 0)
         {
             normal = normal.Normalize();
-            bool array = layout == Layout.Array || (layout == Layout.ArrayIfLonger && length > spacing);
-            if (array && (spacing <= 0 || length <= MinSeg)) array = false;
+            bool fixedCount = layout == Layout.FixedCount && count >= 2 && length > MinSeg;
+            bool array = fixedCount || layout == Layout.Array || (layout == Layout.ArrayIfLonger && length > spacing);
+            if (array && !fixedCount && (spacing <= 0 || length <= MinSeg)) array = false;
 
             // --- RED DE SEGURIDAD (1): geometria planificada, antes de crear nada ---
             // Se comprueba la barra de definicion y cada posicion del array, con la
@@ -341,7 +333,7 @@ namespace RetainingWallRebar
             var offsets = new List<double> { 0 };
             if (array)
             {
-                int n = (int)Math.Ceiling(length / spacing - 1e-9) + 1;
+                int n = fixedCount ? count : (int)Math.Ceiling(length / spacing - 1e-9) + 1;
                 double step = length / (n - 1);
                 for (int k = 1; k < n; k++) offsets.Add(k * step);
             }
@@ -364,7 +356,9 @@ namespace RetainingWallRebar
             Rebar rb = Create(c.Doc, c.Host, bt, normal, curves, out string err);
             if (rb == null) { c.Result.Failed.Add(name + ": Revit no pudo crear la barra (" + err + ")"); return; }
 
-            if (array)
+            if (fixedCount)
+                rb.GetShapeDrivenAccessor().SetLayoutAsFixedNumber(count, length, true, true, true);
+            else if (array)
                 rb.GetShapeDrivenAccessor().SetLayoutAsMaximumSpacing(spacing, length, true, true, includeLast);
             else
                 rb.GetShapeDrivenAccessor().SetLayoutAsSingle();

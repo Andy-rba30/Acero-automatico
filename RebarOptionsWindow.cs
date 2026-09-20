@@ -301,12 +301,13 @@ namespace RetainingWallRebar
             left.Children.Add(_zoneMessage);
             left.Children.Add(new TextBlock
             {
-                Text = "Los tramos se numeran de abajo arriba. En cada tramo la primera barra va a media separacion de su " +
-                       "limite inferior; la ultima del tramo superior respeta el recubrimiento de coronacion y para bajo las " +
-                       "patillas de coronacion si las hay. El tramo inferior sigue ademas hacia abajo dentro de la zapata, con su " +
-                       "misma separacion, hasta quedar sobre las patillas de las verticales y la parrilla inferior (envuelto por " +
-                       "las patillas). Las cotas del modo editable se miden desde la cara superior de la zapata y se aplican a " +
-                       "todos los muros seleccionados; un tramo que quede por encima de la coronacion de un muro se omite en ese muro.",
+                Text = "Los tramos se numeran de abajo arriba. Reparto por separacion maxima, como las longitudinales de zapata: " +
+                       "la primera barra va en el rincon de la patilla de abajo (dentro de la zapata, sobre la patilla mas alta), " +
+                       "la ultima tangente bajo la patilla de coronacion (o en el recubrimiento), y las de en medio a partes " +
+                       "iguales con una separacion igual o menor que la escrita; la columna de barras indica la real. Los limites " +
+                       "entre tramos llevan barra, que cuenta para el tramo de abajo. Las cotas del modo editable se miden desde " +
+                       "la cara superior de la zapata y se aplican a todos los muros seleccionados; un tramo que quede por encima " +
+                       "de la coronacion de un muro se omite en ese muro.",
                 TextWrapping = TextWrapping.Wrap,
                 Foreground = Brushes.DimGray,
                 Margin = new Thickness(4, 6, 4, 0)
@@ -360,7 +361,7 @@ namespace RetainingWallRebar
             _zoneGrid.RowDefinitions.Clear();
             _zoneRows.Clear();
 
-            string[] headers = { "Tramo", "Cota superior (m)", "Altura (m)", "Trasdos: tipo de barra", "sep. (mm)", "Intrados: tipo de barra", "sep. (mm)", "Barras / cara" };
+            string[] headers = { "Tramo", "Cota superior (m)", "Altura (m)", "Trasdos: tipo de barra", "sep. max. (mm)", "Intrados: tipo de barra", "sep. max. (mm)", "Barras / cara (sep. real)" };
             _zoneGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             for (int c = 0; c < headers.Length; c++)
             {
@@ -544,6 +545,9 @@ namespace RetainingWallRebar
             }
         }
 
+        private static string BarsText(ResolvedFace f) =>
+            f.Heights.Count == 0 ? "0" : f.Heights.Count + " (" + WallSection.ToMm(f.RealSpacing).ToString("0") + ")";
+
         private WallSection SelectedSection()
         {
             if (_selected == null || !_selected.CanBuild) return null;
@@ -585,7 +589,7 @@ namespace RetainingWallRebar
                 return;
             }
 
-            ZoneLayout layout = StemZones.Resolve(s, scratch, DiameterFt, false);
+            ZoneLayout layout = StemZones.Resolve(s, scratch, DiameterFt, WingRole.Straight);
             var msgs = new List<string>();
             if (layout.Error != null) msgs.Add(layout.Error);
             msgs.AddRange(layout.Warnings);
@@ -597,8 +601,8 @@ namespace RetainingWallRebar
                 if (z == null) { row.Height.Text = "-"; row.Bars.Text = "-"; continue; }
                 row.Height.Text = Fmt((z.VTo - z.VFrom) * 0.3048);
                 if (_modeAuto.IsChecked == true && !z.IsTop) row.Top.Text = Fmt((z.VTo - s.FootingTop) * 0.3048);
-                string b = z.Back != null ? z.Back.Heights.Count.ToString() : "-";
-                string f = z.Front != null ? z.Front.Heights.Count.ToString() : "-";
+                string b = z.Back != null ? BarsText(z.Back) : "-";
+                string f = z.Front != null ? BarsText(z.Front) : "-";
                 row.Bars.Text = (z.Cfg.SameBothFaces && z.Back != null && z.Front != null) ? b : b + " / " + f;
             }
 
