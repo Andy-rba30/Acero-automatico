@@ -385,8 +385,14 @@ namespace RetainingWallRebar
                 double face = s.LenW - cov;
                 if (cfg.CornerFootingMeshBoth)
                 {
+                    // transversales cruzadas en el bloque; las longitudinales de cada ala entran en el
+                    // bloque la longitud de solape, paralelas y en la misma capa que las transversales
+                    // de la otra ala, con las que solapan
+                    double lapDia = cfg.CornerLapDiameters, lapMin = Mm(cfg.CornerLapMinMm);
                     p.TransW0 = cov; p.TransW1 = full;
                     p.LongW0 = cov; p.LongW1 = face;
+                    p.LongWMax = full;
+                    p.LongLapFor = db => Math.Min(Math.Max(lapMin, lapDia * db), Math.Max(0, full - face));
                     p.SwapFootingLayers = k != through;
                 }
                 else
@@ -460,6 +466,13 @@ namespace RetainingWallRebar
 
         /// <summary>Reparto de horizontales ya resuelto para este tramo (null = resolverlo al armar).</summary>
         public ZoneLayout Zones;
+
+        /// <summary>
+        /// Solape de las longitudinales de zapata en el bloque de esquina: longitud (pies) que
+        /// entran mas alla de LongW1 para una barra de diametro db, acotada a LongWMax. null = paran en LongW1.
+        /// </summary>
+        public Func<double, double> LongLapFor;
+        public double LongWMax;
 
         /// <summary>Malla de zapata con las capas intercambiadas (longitudinales fuera, transversales dentro).</summary>
         public bool SwapFootingLayers;

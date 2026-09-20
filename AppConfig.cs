@@ -11,7 +11,7 @@ namespace RetainingWallRebar
     public class BarFamilyCfg
     {
         public bool Enabled { get; set; } = true;
-        /// <summary>Nombre (o fragmento) del RebarBarType. Si no se encuentra se usa el primero del proyecto.</summary>
+        /// <summary>Nombre del RebarBarType cargado en el proyecto (exacto, o un fragmento que lo identifique). Si no existe, la ventana lo marca y no se arma.</summary>
         public string BarTypeName { get; set; } = "";
         public double SpacingMm { get; set; } = 200;
         /// <summary>Longitud de la patilla o pata. Uso segun la familia.</summary>
@@ -210,7 +210,9 @@ namespace RetainingWallRebar
         ///  "through" = la malla completa (transversales + longitudinales) del ala pasante;
         ///              la otra ala para en la cara del bloque.
         ///  "both"    = las transversales de las dos alas atraviesan el bloque (capas cruzadas)
-        ///              y las longitudinales de ambas paran en la cara del bloque.
+        ///              y las longitudinales de ambas entran en el bloque la longitud de solape
+        ///              (CornerLapDiameters / CornerLapMinMm), paralelas a las transversales de
+        ///              la otra ala, con las que solapan.
         /// </summary>
         public string CornerFootingMesh { get; set; } = "through";
 
