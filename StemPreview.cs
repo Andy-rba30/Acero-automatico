@@ -317,6 +317,8 @@ namespace RetainingWallRebar
 
             foreach (ResolvedZone z in _layout.Zones)
             {
+                // sin tipo de barra en ninguna cara no hay nada que ensenar de este tramo
+                if ((z.Back?.Heights.Count ?? 0) + (z.Front?.Heights.Count ?? 0) == 0) continue;
                 string key = "zone:" + z.Index;
                 Brush brush = ZoneBrushes[z.Index % ZoneBrushes.Length];
                 double op = Lit(key) ? 0.5 : Dimmed(key) ? 0.12 : 0.25;
@@ -392,8 +394,8 @@ namespace RetainingWallRebar
         private static string FaceLines(ResolvedZone z)
         {
             string t = "";
-            if (z.Back != null) t += "\ntrasdos " + z.Back.BarTypeName + " @" + WallSection.ToMm(z.Back.RealSpacing) + " (" + Count(z.Back) + ")";
-            if (z.Front != null) t += "\nintrados " + z.Front.BarTypeName + " @" + WallSection.ToMm(z.Front.RealSpacing) + " (" + Count(z.Front) + ")";
+            if (z.Back != null && z.Back.Db > 0) t += "\ntrasdos " + z.Back.BarTypeName + " @" + WallSection.ToMm(z.Back.RealSpacing) + " (" + Count(z.Back) + ")";
+            if (z.Front != null && z.Front.Db > 0) t += "\nintrados " + z.Front.BarTypeName + " @" + WallSection.ToMm(z.Front.RealSpacing) + " (" + Count(z.Front) + ")";
             return t;
         }
 

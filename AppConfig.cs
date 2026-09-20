@@ -288,7 +288,7 @@ namespace RetainingWallRebar
                                       string.Equals(b.BarTypeName, f.BarTypeName, StringComparison.OrdinalIgnoreCase) &&
                                       Math.Abs(b.SpacingMm - f.SpacingMm) < 1e-9;
                 }
-                if (b == null && f == null) z.BackBarTypeName = "1/2";
+                if (b == null && f == null) z.BackBarTypeName = "";
                 StemHorizontalZones.Add(z);
             }
             if (StemHorizontalZones.Count > 3) StemHorizontalZones.RemoveRange(3, StemHorizontalZones.Count - 3);

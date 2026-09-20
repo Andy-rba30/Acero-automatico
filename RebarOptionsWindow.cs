@@ -94,6 +94,8 @@ namespace RetainingWallRebar
         private readonly Dictionary<HostAnalysis, Border> _itemRows = new Dictionary<HostAnalysis, Border>();
         private bool _building = true;
         private bool _refreshing;
+        /// <summary>Tras intentar armar sin tipos de barra, las casillas vacias se marcan en rojo.</summary>
+        private bool _strictTypes;
 
         private static readonly Thickness Pad = new Thickness(4, 2, 4, 2);
         private static readonly Brush SelectedBrush = new SolidColorBrush(Color.FromRgb(0xDC, 0xE8, 0xF6));
@@ -436,8 +438,9 @@ namespace RetainingWallRebar
 
         /// <summary>
         /// Desplegable con los tipos de barra cargados en el proyecto, con su diametro. Solo
-        /// se puede elegir uno de ellos: si el nombre guardado no existe, queda sin seleccion
-        /// (en rojo) y el nombre buscado se guarda en Tag para el aviso.
+        /// se puede elegir uno de ellos. Sin nombre guardado (valor por defecto) queda vacio y
+        /// sin aviso hasta que se intenta armar; si el nombre guardado no existe en el
+        /// proyecto, queda vacio, en rojo y con aviso (el nombre buscado se guarda en Tag).
         /// </summary>
         private ComboBox TypeBox(string current)
         {
@@ -453,14 +456,14 @@ namespace RetainingWallRebar
         private string TypeName(ComboBox cb) =>
             cb.SelectedItem is string d && _typeByDisplay.TryGetValue(d, out string n) ? n : "";
 
-        /// <summary>Aviso de un desplegable activo sin tipo valido, o null.</summary>
-        private static string MissingType(ComboBox cb, string label)
+        /// <summary>Aviso de un desplegable activo cuyo nombre guardado no existe en el proyecto, o null.</summary>
+        private string MissingType(ComboBox cb, string label)
         {
             if (cb == null || !cb.IsEnabled || cb.SelectedIndex >= 0) return null;
             string wanted = (cb.Tag as string ?? "").Trim();
-            return wanted.Length > 0
-                ? label + ": el tipo de barra \"" + wanted + "\" no existe en este proyecto; elige uno del desplegable"
-                : label + ": elige un tipo de barra";
+            if (wanted.Length > 0)
+                return label + ": el tipo de barra \"" + wanted + "\" no existe en este proyecto; elige uno del desplegable";
+            return _strictTypes ? label + ": elige un tipo de barra" : null;
         }
 
         /// <summary>Activa o desactiva los controles de cada tramo segun modo, caras activas y "mismo armado".</summary>
@@ -525,8 +528,8 @@ namespace RetainingWallRebar
             if (_modeManual.IsChecked == true) OnModeChanged(); else Refresh();
         }
 
-        /// <summary>Vuelca la tabla de tramos en _zoneStore. errors puede ser null (lectura tolerante).</summary>
-        private void ReadZoneRows(List<string> errors)
+        /// <summary>Vuelca la tabla de tramos en _zoneStore. errors puede ser null (lectura tolerante); requireTypes = exigir tipo de barra.</summary>
+        private void ReadZoneRows(List<string> errors, bool requireTypes = true)
         {
             bool manual = _modeManual.IsChecked == true;
             bool same = _sameFaces.IsChecked == true;
@@ -550,8 +553,8 @@ namespace RetainingWallRebar
                 }
 
                 string bt = TypeName(row.BackType);
-                if (bt.Length > 0) z.BackBarTypeName = bt;
-                else if (_backOn.IsChecked == true) errors?.Add(name + ": elige el tipo de barra del trasdos");
+                z.BackBarTypeName = bt;
+                if (bt.Length == 0 && requireTypes && _backOn.IsChecked == true) errors?.Add(name + ": elige el tipo de barra del trasdos");
                 if (TryParse(row.BackSpacing.Text, out double bs) && bs >= 1) z.BackSpacingMm = bs;
                 else if (_backOn.IsChecked == true) errors?.Add(name + ": separacion del trasdos no valida");
 
@@ -563,8 +566,8 @@ namespace RetainingWallRebar
                 else
                 {
                     string ft = TypeName(row.FrontType);
-                    if (ft.Length > 0) z.FrontBarTypeName = ft;
-                    else if (_frontOn.IsChecked == true) errors?.Add(name + ": elige el tipo de barra del intrados");
+                    z.FrontBarTypeName = ft;
+                    if (ft.Length == 0 && requireTypes && _frontOn.IsChecked == true) errors?.Add(name + ": elige el tipo de barra del intrados");
                     if (TryParse(row.FrontSpacing.Text, out double fs) && fs >= 1) z.FrontSpacingMm = fs;
                     else if (_frontOn.IsChecked == true) errors?.Add(name + ": separacion del intrados no valida");
                 }
@@ -572,7 +575,7 @@ namespace RetainingWallRebar
         }
 
         private static string BarsText(ResolvedFace f) =>
-            f.Heights.Count == 0 ? "0" : f.Heights.Count + " (" + WallSection.ToMm(f.RealSpacing).ToString("0") + ")";
+            f.Db <= 0 ? "-" : f.Heights.Count == 0 ? "0" : f.Heights.Count + " (" + WallSection.ToMm(f.RealSpacing).ToString("0") + ")";
 
         private WallSection SelectedSection()
         {
@@ -580,7 +583,11 @@ namespace RetainingWallRebar
             return _selected.Straight ?? _selected.Corner.Wings[0];
         }
 
-        /// <summary>Diametro (pies) del tipo de barra; 0 si el nombre no existe en el proyecto (nunca otro tipo a escondidas).</summary>
+        /// <summary>
+        /// Diametro (pies) del tipo de barra; 0 si no hay tipo (vacio o inexistente en el
+        /// proyecto), y con 0 la familia no se dibuja: una configuracion recien abierta, sin
+        /// tipos, muestra solo el hormigon. Nunca se sustituye por otro tipo.
+        /// </summary>
         private double DiameterFt(string name)
         {
             string match = RebarGenerator.MatchName(_barTypes, name);
@@ -710,8 +717,10 @@ namespace RetainingWallRebar
             panel.Children.Add(new TextBlock
             {
                 Text = "Trasdos = cara del talon (vuelo mayor de zapata). Los desplegables listan los tipos de barra cargados " +
-                       "en el proyecto con su diametro; un nombre guardado que no exista queda en rojo hasta que elijas uno, y " +
-                       "nunca se sustituye por otro tipo. La patilla inferior de las verticales se apoya sobre " +
+                       "en el proyecto con su diametro; por defecto no hay ninguno elegido y hace falta elegirlos para armar. " +
+                       "Al guardar como valores por defecto pueden quedar vacios (el config sirve para cualquier proyecto) o " +
+                       "con tus tipos; un nombre guardado que no exista en el proyecto queda en rojo hasta que elijas otro, " +
+                       "y nunca se sustituye por otro tipo. La patilla inferior de las verticales se apoya sobre " +
                        "lo mas alto de la parrilla inferior, cruza bajo la pantalla y sobresale la longitud indicada de la cara " +
                        "opuesta; las patillas van apiladas (la del intrados sobre la del trasdos). La patilla de coronacion " +
                        "(0 = sin patilla) se dobla hacia la cara contraria a la altura del recubrimiento de coronacion, la del " +
@@ -977,8 +986,8 @@ namespace RetainingWallRebar
             row.L2.ToolTip = center ? "Hacia el talon, desde el eje de la pantalla en su base" : "Solo en posicion Centro";
         }
 
-        /// <summary>Vuelca la tabla de refuerzos en _reinfStore. errors puede ser null (lectura tolerante).</summary>
-        private void ReadReinfRows(List<string> errors)
+        /// <summary>Vuelca la tabla de refuerzos en _reinfStore. errors puede ser null (lectura tolerante); requireTypes = exigir tipo de barra.</summary>
+        private void ReadReinfRows(List<string> errors, bool requireTypes = true)
         {
             int i = 0;
             foreach (ReinfRow row in _reinfRows)
@@ -993,8 +1002,8 @@ namespace RetainingWallRebar
                 else errors?.Add(name + ": hueco no valido");
 
                 string type = TypeName(row.Type);
-                if (type.Length > 0) c.BarTypeName = type;
-                else errors?.Add(name + ": elige un tipo de barra");
+                c.BarTypeName = type;
+                if (type.Length == 0 && requireTypes) errors?.Add(name + ": elige un tipo de barra");
                 if (TryParse(row.Spacing.Text, out double sp) && sp >= 1) c.SpacingMm = sp;
                 else errors?.Add(name + ": separacion no valida");
 
@@ -1203,9 +1212,11 @@ namespace RetainingWallRebar
 
         /// <summary>
         /// Vuelca los controles en target. Con errors = null la lectura es tolerante (para el
-        /// esquema): los valores no validos se dejan como estaban.
+        /// esquema): los valores no validos se dejan como estaban. requireTypes: para armar
+        /// hace falta un tipo de barra en cada familia activa; para guardar valores por
+        /// defecto pueden quedar vacios (asi el config.json sirve para cualquier proyecto).
         /// </summary>
-        private void ReadUi(AppConfig target, List<string> errors)
+        private void ReadUi(AppConfig target, List<string> errors, bool requireTypes = true)
         {
             double v;
             if (TryNum(_covStem, "Recubrimiento alzado", 0, errors, out v)) target.CoverStemMm = v;
@@ -1231,8 +1242,8 @@ namespace RetainingWallRebar
                 if (!fam.Enabled) continue;
 
                 string type = TypeName(row.Type);
-                if (type.Length == 0) errors?.Add(row.Name + ": elige un tipo de barra");
-                else fam.BarTypeName = type;
+                fam.BarTypeName = type;
+                if (type.Length == 0 && requireTypes) errors?.Add(row.Name + ": elige un tipo de barra");
 
                 if (TryNum(row.Spacing, row.Name + ", separacion", 1, errors, out v)) fam.SpacingMm = v;
                 if (row.HasLeg && TryNum(row.Leg, row.Name + (row.Embed ? ", anclaje" : ", patilla"), row.Embed ? 1 : 0, errors, out v))
@@ -1250,14 +1261,14 @@ namespace RetainingWallRebar
             }
 
             // refuerzos de zapata
-            ReadReinfRows(errors);
+            ReadReinfRows(errors, requireTypes);
             target.FootingReinforcements = _reinfStore.Select(r => r.Clone()).ToList();
 
             // horizontales por tramos
             target.StemHorizontalBackEnabled = _backOn.IsChecked == true;
             target.StemHorizontalFrontEnabled = _frontOn.IsChecked == true;
             target.StemZoneMode = _modeManual.IsChecked == true ? "manual" : "auto";
-            ReadZoneRows(errors);
+            ReadZoneRows(errors, requireTypes);
             target.StemHorizontalZones = _zoneStore.Take(_zoneCount).Select(z => z.Clone()).ToList();
         }
 
@@ -1273,7 +1284,9 @@ namespace RetainingWallRebar
         }
 
         private static bool NumOk(TextBox tb, double min) => !tb.IsEnabled || tb.IsReadOnly || (TryParse(tb.Text, out double v) && v >= min);
-        private static bool TypeOk(ComboBox cb) => !cb.IsEnabled || cb.SelectedIndex >= 0;
+        /// <summary>Un desplegable vacio solo es error si tenia un nombre guardado que no existe, o tras intentar armar.</summary>
+        private bool TypeOk(ComboBox cb) =>
+            !cb.IsEnabled || cb.SelectedIndex >= 0 || (!_strictTypes && ((cb.Tag as string) ?? "").Trim().Length == 0);
 
         private void MarkValidity()
         {
@@ -1320,11 +1333,12 @@ namespace RetainingWallRebar
             }
         }
 
-        private bool Collect()
+        private bool Collect(bool requireTypes)
         {
             var errors = new List<string>();
-            ReadUi(_cfg, errors);
+            ReadUi(_cfg, errors, requireTypes);
             if (errors.Count == 0) return true;
+            if (requireTypes) { _strictTypes = true; Refresh(); }
             MessageBox.Show(this, string.Join(Environment.NewLine, errors), "Revisa los valores",
                             MessageBoxButton.OK, MessageBoxImage.Warning);
             return false;
@@ -1332,7 +1346,7 @@ namespace RetainingWallRebar
 
         private void OnBuild(object sender, RoutedEventArgs e)
         {
-            if (!Collect()) return;
+            if (!Collect(true)) return;
             Result = _cfg;
             DialogResult = true;
             Close();
@@ -1340,7 +1354,8 @@ namespace RetainingWallRebar
 
         private void OnSave(object sender, RoutedEventArgs e)
         {
-            if (!Collect()) return;
+            // los tipos de barra pueden quedar vacios: el config.json vale para cualquier proyecto
+            if (!Collect(false)) return;
             try
             {
                 _cfg.Save();

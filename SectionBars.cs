@@ -25,6 +25,10 @@ namespace RetainingWallRebar
     /// la cara opuesta; la del intrados va apilada sobre la del trasdos. En coronacion,
     /// la patilla opcional se dobla hacia la cara contraria (la del intrados un diametro
     /// mas abajo) y los horizontales del tramo superior paran debajo de ellas.
+    ///
+    /// Una familia activa cuyo tipo de barra no existe (diametro 0) se trata como si no
+    /// existiera: no se dibuja ni influye en las demas. Asi el esquema de una
+    /// configuracion recien abierta, sin tipos elegidos, muestra solo el hormigon.
     /// </summary>
     public static class SectionBars
     {
@@ -184,6 +188,7 @@ namespace RetainingWallRebar
             if (!f.Enabled) return null;
             FootingLayer L = Layer(s, cfg, top, dia, swap, otherTransDb);
             double db = L.DbT;
+            if (db <= 0) return null;   // sin tipo de barra
             double v = L.V(L.DT);
 
             // la superior va por dentro de las patas de la inferior
@@ -210,6 +215,7 @@ namespace RetainingWallRebar
             if (!f.Enabled) return null;
             FootingLayer L = Layer(s, cfg, top, dia, swap, otherTransDb);
             double db = L.DbL;
+            if (db <= 0) return null;   // sin tipo de barra
 
             // por dentro de las patas de su transversal (y la superior, ademas, de las de la inferior)
             double inset = L.DbT + (top ? DbT(cfg, false, dia) : 0);
@@ -230,6 +236,7 @@ namespace RetainingWallRebar
         {
             warning = null;
             double db = dia(r.BarTypeName);
+            if (db <= 0) return null;   // sin tipo de barra
 
             IList<FootingReinfCfg> list = cfg.FootingReinforcements;
             int idx = list?.IndexOf(r) ?? -1;
@@ -377,7 +384,7 @@ namespace RetainingWallRebar
             {
                 double dbD = dia(fd.BarTypeName);
                 double top = DowelTop(s, cfg, fd, dbD), bot = DowelBottom(s, cfg, fd, dbD);
-                if (top > bot + Tiny && v + db * 0.5 > bot + Tiny && v - db * 0.5 < top - Tiny)
+                if (dbD > 0 && top > bot + Tiny && v + db * 0.5 > bot + Tiny && v - db * 0.5 < top - Tiny)
                     off += (dbV > 0 ? Math.Max(0, Mm(fd.GapMm)) : 0) + dbD;
             }
             return off;
@@ -395,6 +402,7 @@ namespace RetainingWallRebar
             BarFamilyCfg f = back ? cfg.StemVerticalBack : cfg.StemVerticalFront;
             if (!f.Enabled) return null;
             double db = dia(f.BarTypeName);
+            if (db <= 0) return null;   // sin tipo de barra
             double cov = Mm(cfg.CoverStemMm);
 
             bool useU0 = back ? s.HeelAtU0 : !s.HeelAtU0;
@@ -448,6 +456,7 @@ namespace RetainingWallRebar
             BarFamilyCfg f = back ? cfg.StemDowelBack : cfg.StemDowelFront;
             if (!f.Enabled) return null;
             double db = dia(f.BarTypeName);
+            if (db <= 0) return null;   // sin tipo de barra
             double dbV = DbV(cfg, back, dia);
             double off = Mm(cfg.CoverStemMm) + (f.Stacked && dbV > 0 ? dbV + Math.Max(0, Mm(f.GapMm)) : 0) + db * 0.5;
 

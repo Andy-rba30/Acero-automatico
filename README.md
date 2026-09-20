@@ -318,12 +318,16 @@ Requisitos previos en el modelo:
 - El material de la familia debe ser **hormigón** y la familia estructural,
   o `RebarHostData.IsValidHost()` devolverá falso.
 - Debe haber al menos una **familia de armadura cargada** (`RebarBarType`).
-- Ajusta `barTypeName` en `config.json` (o en la ventana) a los nombres reales de
-  tus tipos de barra. La búsqueda admite un fragmento (`"7/8"` encuentra
-  `ø7/8"`), pero si no hay coincidencia el plugin **no** sustituye el tipo por
-  otro: la ventana lo marca en rojo y no arma hasta que elijas uno de los
-  cargados. Crea tus tipos (por ejemplo Ø3/8", Ø1/2", Ø5/8") en la plantilla de
-  Revit duplicando uno existente y ajustando su diámetro.
+- Los tipos de barra (`barTypeName`) vienen **vacíos** en el `config.json` del
+  repositorio, para que sirva en cualquier proyecto: al abrir la ventana el
+  esquema muestra solo el hormigón, y cada familia aparece cuando eliges su
+  tipo en el desplegable (solo los cargados en el proyecto, con su diámetro).
+  Para armar hacen falta todos los tipos de las familias activas. "Guardar como valores por defecto" admite dejarlos vacíos o
+  guardar tus tipos. Un nombre guardado admite un fragmento (`"1/2"` encuentra
+  `Ø1/2"`), pero si no existe en el proyecto el plugin **no** sustituye el tipo
+  por otro: la ventana lo marca en rojo y no arma hasta que elijas uno. Crea
+  tus tipos (por ejemplo Ø3/8", Ø1/2", Ø5/8") en la plantilla de Revit, a mano
+  o con el add-in "Tipos de barra Perú".
 - El sólido del elemento debe ser **uno solo** y un **prisma recto** o una **L**
   (ver arriba).
 
