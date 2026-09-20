@@ -369,7 +369,8 @@ namespace RetainingWallRebar
                     {
                         double u = (useU0 ? _s.FaceU0(v) : _s.FaceU1(v)) + sign * (SectionBars.HorizontalOffset(_s, _cfg, back, v, rf.Db, _diameterFt) + rf.Db * 0.5);
                         string tip = "Horizontal " + (back ? "trasdos" : "intrados") + " · Tramo " + (z.Index + 1) + "\n" + rf.BarTypeName +
-                                     " @" + WallSection.ToMm(rf.Spacing) + " mm · " + rf.Heights.Count + " barras en el tramo" +
+                                     " @" + WallSection.ToMm(rf.Spacing) + " mm max., real " + WallSection.ToMm(rf.RealSpacing) + " mm · " +
+                                     rf.Heights.Count + " barras en el tramo" +
                                      (rf.FootingCount > 0 ? " (" + rf.FootingCount + " en la zapata)" : "") +
                                      "\ncota " + (v < _s.FootingTop ? "-" : "+") + M(Math.Abs(v - _s.FootingTop)) + " m";
                         var dot = new Ellipse
@@ -391,8 +392,8 @@ namespace RetainingWallRebar
         private static string FaceLines(ResolvedZone z)
         {
             string t = "";
-            if (z.Back != null) t += "\ntrasdos " + z.Back.BarTypeName + " @" + WallSection.ToMm(z.Back.Spacing) + " (" + Count(z.Back) + ")";
-            if (z.Front != null) t += "\nintrados " + z.Front.BarTypeName + " @" + WallSection.ToMm(z.Front.Spacing) + " (" + Count(z.Front) + ")";
+            if (z.Back != null) t += "\ntrasdos " + z.Back.BarTypeName + " @" + WallSection.ToMm(z.Back.RealSpacing) + " (" + Count(z.Back) + ")";
+            if (z.Front != null) t += "\nintrados " + z.Front.BarTypeName + " @" + WallSection.ToMm(z.Front.RealSpacing) + " (" + Count(z.Front) + ")";
             return t;
         }
 

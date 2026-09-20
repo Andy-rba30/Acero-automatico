@@ -103,27 +103,35 @@ verticales no cambian: una sola distribución y diámetro en toda la altura.
   coronación. Las cotas son las mismas para todos los muros seleccionados; un
   tramo que quede por encima de la coronación de un muro se omite en ese muro
   (con aviso).
-- Dentro de cada tramo la primera barra va a media separación de su límite
-  inferior y las siguientes cada "separación"; la última del tramo superior
-  respeta el recubrimiento de coronación y, si las verticales llevan patilla de
-  coronación, para tangente por debajo de la patilla más baja.
-- El tramo inferior sigue además **hacia abajo dentro de la zapata**, con su
-  mismo tipo de barra y separación y en las dos caras, hasta quedar tangente
-  sobre la patilla más alta de las verticales (o sobre la parrilla inferior si
-  no hay verticales): así los horizontales quedan envueltos por las patillas
-  de arriba y de abajo. Esas barras van siempre barra a barra, también con
-  bandas activadas; el recuento "barras / cara" las incluye y el esquema
+- **Reparto por separación máxima**, igual que las longitudinales de zapata en
+  Revit: la separación escrita es la máxima. La primera barra del tramo
+  inferior va en el rincón de la patilla de abajo (dentro de la zapata,
+  tangente a la vertical y apoyada sobre la patilla más alta, o sobre la
+  parrilla inferior si no hay verticales); la última del tramo superior va
+  tangente bajo la patilla de coronación más baja (o en el recubrimiento de
+  coronación si no hay patillas). Entre ambas, n = ⌈tramo / separación⌉ + 1
+  barras a partes iguales. Así los horizontales quedan envueltos por las
+  patillas arriba y abajo, y la tabla y el esquema muestran la separación
+  real.
+- Con varios tramos, los límites entre tramos llevan barra, que pertenece al
+  tramo de abajo; el tramo de arriba arranca una separación real por encima y
+  termina en su cota (el superior, en el rincón de coronación). El recuento
+  "barras / cara" incluye las que quedan dentro de la zapata y el esquema
   prolonga la banda del tramo hasta ellas.
+- En esquineros, para que las patas de un ala sigan apiladas un diámetro sobre
+  las barras de la otra, las dos alas arrancan sobre la patilla más alta de
+  las dos zapatas, el ala pasante cede un diámetro arriba y la otra uno abajo,
+  y así tienen el mismo número de barras.
 - Cada horizontal se apoya en la vertical de su cara o, a la altura de un
   bastón apilado por dentro, en el bastón (`SectionBars.HorizontalOffset`).
 - El reparto lo calcula `StemZones.Resolve`, una función sin efectos que usan
   tanto la ventana (esquema y recuento de barras) como el generador, así lo que
-  se dibuja es lo que se crea. Con `stemHorizontalBandMm` > 0 cada tramo se
-  agrupa en arrays por bandas; en ese caso Revit equiespacia las barras dentro
-  de cada banda y su cota exacta puede diferir unos milímetros del esquema.
+  se dibuja es lo que se crea. Con `stemHorizontalBandMm` > 0 las barras
+  consecutivas que caben en una banda se agrupan en un array de número fijo
+  con la separación real, así las cotas siguen siendo las del esquema (solo
+  el talud se aproxima dentro de cada grupo).
 - En los esquineros en L, las patas de solape se calculan barra a barra con el
-  diámetro del tramo en el que está cada una, y el desplazamiento de un
-  diámetro del ala no pasante se aplica igual.
+  diámetro del tramo en el que está cada una.
 
 ## Interfaz gráfica
 
@@ -324,9 +332,10 @@ Requisitos previos en el modelo:
   `stemHorizontalBack` / `stemHorizontalFront` se siguen leyendo y se convierten
   en un tramo único.
 - `stemHorizontalBandMm`: `0` coloca los horizontales del alzado barra a barra,
-  respetando el talud exactamente (≈35 elementos por cara en un muro de 7 m).
-  Un valor como `1000` los agrupa en arrays por bandas: muchos menos elementos,
-  a costa de un pequeño desvío respecto a la cara dentro de cada banda.
+  respetando el talud exactamente (≈38 elementos por cara en un muro de 7 m).
+  Un valor como `1000` agrupa las barras consecutivas de cada banda en un array
+  de número fijo con la separación real: muchos menos elementos, a costa de un
+  pequeño desvío respecto a la cara dentro de cada grupo.
 - `legMm` en las verticales es lo que la patilla sobresale de la cara opuesta del
   alzado tras cruzar bajo la pantalla (los 900 del plano). En las transversales
   es la longitud de las patas verticales de los extremos. `crownLegMm` (0 por
