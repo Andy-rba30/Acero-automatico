@@ -575,7 +575,7 @@ namespace RetainingWallRebar
         }
 
         private static string BarsText(ResolvedFace f) =>
-            f.Heights.Count == 0 ? "0" : f.Heights.Count + " (" + WallSection.ToMm(f.RealSpacing).ToString("0") + ")";
+            f.Db <= 0 ? "-" : f.Heights.Count == 0 ? "0" : f.Heights.Count + " (" + WallSection.ToMm(f.RealSpacing).ToString("0") + ")";
 
         private WallSection SelectedSection()
         {
@@ -583,22 +583,15 @@ namespace RetainingWallRebar
             return _selected.Straight ?? _selected.Corner.Wings[0];
         }
 
-        /// <summary>Diametro provisional (mm) con el que el esquema dibuja una familia sin tipo de barra elegido.</summary>
-        private const double PlaceholderMm = 12;
-        /// <summary>true si en el ultimo redibujo alguna familia activa se dibujo con el diametro provisional.</summary>
-        private bool _placeholderUsed;
-
         /// <summary>
-        /// Diametro (pies) del tipo de barra. Sin tipo (vacio o inexistente en el proyecto) el
-        /// esquema usa un diametro provisional y lo avisa: la familia sigue viendose, y armar
-        /// queda bloqueado hasta elegir un tipo real. Nunca se sustituye por otro tipo.
+        /// Diametro (pies) del tipo de barra; 0 si no hay tipo (vacio o inexistente en el
+        /// proyecto), y con 0 la familia no se dibuja: una configuracion recien abierta, sin
+        /// tipos, muestra solo el hormigon. Nunca se sustituye por otro tipo.
         /// </summary>
         private double DiameterFt(string name)
         {
             string match = RebarGenerator.MatchName(_barTypes, name);
-            if (match != null && _diametersMm.TryGetValue(match, out double mm)) return WallSection.Mm(mm);
-            _placeholderUsed = true;
-            return WallSection.Mm(PlaceholderMm);
+            return match != null && _diametersMm.TryGetValue(match, out double mm) ? WallSection.Mm(mm) : 0;
         }
 
         /// <summary>Recalcula el reparto con lo que hay en pantalla, actualiza la tabla y redibuja el esquema.</summary>
@@ -614,7 +607,6 @@ namespace RetainingWallRebar
         {
             var scratch = _cfg.Clone();
             ReadUi(scratch, null);
-            _placeholderUsed = false;
 
             WallSection s = SelectedSection();
             if (s == null)
@@ -683,9 +675,8 @@ namespace RetainingWallRebar
             }
             _familyMessage.Text = string.Join(Environment.NewLine, fmsgs);
 
+            _previewCaption.Text = "Esquema: " + _selected.Tag.Trim() + (_selected.Corner != null ? " (ala 1)" : "");
             _preview.Show(s, scratch, layout, DiameterFt);
-            _previewCaption.Text = "Esquema: " + _selected.Tag.Trim() + (_selected.Corner != null ? " (ala 1)" : "") +
-                                   (_placeholderUsed ? "   (familias sin tipo de barra: dibujadas con " + PlaceholderMm + " mm provisionales)" : "");
         }
 
         // ------------------------------------------------------------------

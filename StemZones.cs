@@ -174,6 +174,7 @@ namespace RetainingWallRebar
                 Spacing = WallSection.Mm(cfg.SpacingFor(back))
             };
             f.Db = diameterFt(f.BarTypeName);
+            if (f.Db <= 0) return f;   // sin tipo de barra: no hay barras ni aviso (el esquema queda limpio)
             string who = "tramo " + (z.Index + 1) + " " + (back ? "trasdos" : "intrados");
             if (f.Spacing <= Tiny)
             {

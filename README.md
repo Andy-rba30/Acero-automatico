@@ -319,9 +319,10 @@ Requisitos previos en el modelo:
   o `RebarHostData.IsValidHost()` devolverá falso.
 - Debe haber al menos una **familia de armadura cargada** (`RebarBarType`).
 - Los tipos de barra (`barTypeName`) vienen **vacíos** en el `config.json` del
-  repositorio, para que sirva en cualquier proyecto: en la ventana se eligen de
-  los desplegables (solo los cargados en el proyecto, con su diámetro) y hacen
-  falta para armar. "Guardar como valores por defecto" admite dejarlos vacíos o
+  repositorio, para que sirva en cualquier proyecto: al abrir la ventana el
+  esquema muestra solo el hormigón, y cada familia aparece cuando eliges su
+  tipo en el desplegable (solo los cargados en el proyecto, con su diámetro).
+  Para armar hacen falta todos los tipos de las familias activas. "Guardar como valores por defecto" admite dejarlos vacíos o
   guardar tus tipos. Un nombre guardado admite un fragmento (`"1/2"` encuentra
   `Ø1/2"`), pero si no existe en el proyecto el plugin **no** sustituye el tipo
   por otro: la ventana lo marca en rojo y no arma hasta que elijas uno. Crea
