@@ -18,23 +18,23 @@
 
   "partitionTemplate": "MC-{marca}",
 
-  "stemVerticalBack":  { "enabled": true, "barTypeName": "7/8", "spacingMm": 200, "legMm": 900, "crownLegMm": 0 },
-  "stemVerticalFront": { "enabled": true, "barTypeName": "7/8", "spacingMm": 200, "legMm": 900, "crownLegMm": 0 },
-  "stemDowelBack":     { "enabled": false, "barTypeName": "7/8", "spacingMm": 200, "embedMm": 500, "cutLengthMm": 2000, "stacked": true, "gapMm": 0 },
-  "stemDowelFront":    { "enabled": false, "barTypeName": "7/8", "spacingMm": 200, "embedMm": 500, "cutLengthMm": 2000, "stacked": true, "gapMm": 0 },
+  "stemVerticalBack":  { "enabled": true, "barTypeName": "", "spacingMm": 200, "legMm": 900, "crownLegMm": 0 },
+  "stemVerticalFront": { "enabled": true, "barTypeName": "", "spacingMm": 200, "legMm": 900, "crownLegMm": 0 },
+  "stemDowelBack":     { "enabled": false, "barTypeName": "", "spacingMm": 200, "embedMm": 500, "cutLengthMm": 2000, "stacked": true, "gapMm": 0 },
+  "stemDowelFront":    { "enabled": false, "barTypeName": "", "spacingMm": 200, "embedMm": 500, "cutLengthMm": 2000, "stacked": true, "gapMm": 0 },
 
   "stemHorizontalBackEnabled": true,
   "stemHorizontalFrontEnabled": true,
   "stemZoneMode": "auto",
   "stemHorizontalZones": [
-    { "topMm": 0, "sameBothFaces": true, "backBarTypeName": "1/2", "backSpacingMm": 200, "frontBarTypeName": "1/2", "frontSpacingMm": 200 }
+    { "topMm": 0, "sameBothFaces": true, "backBarTypeName": "", "backSpacingMm": 200, "frontBarTypeName": "", "frontSpacingMm": 200 }
   ],
 
-  "footingTransverseBottom": { "enabled": true, "barTypeName": "7/8", "spacingMm": 200, "legMm": 300 },
-  "footingTransverseTop":    { "enabled": true, "barTypeName": "7/8", "spacingMm": 200, "legMm": 300 },
+  "footingTransverseBottom": { "enabled": true, "barTypeName": "", "spacingMm": 200, "legMm": 300 },
+  "footingTransverseTop":    { "enabled": true, "barTypeName": "", "spacingMm": 200, "legMm": 300 },
 
-  "footingLongitudinalBottom": { "enabled": true, "barTypeName": "1/2", "spacingMm": 200 },
-  "footingLongitudinalTop":    { "enabled": true, "barTypeName": "1/2", "spacingMm": 200 },
+  "footingLongitudinalBottom": { "enabled": true, "barTypeName": "", "spacingMm": 200 },
+  "footingLongitudinalTop":    { "enabled": true, "barTypeName": "", "spacingMm": 200 },
 
   "footingReinforcements": [],
 
