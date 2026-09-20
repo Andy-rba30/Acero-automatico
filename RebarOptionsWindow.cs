@@ -22,8 +22,11 @@ namespace RetainingWallRebar
     public sealed class RebarOptionsWindow : Window
     {
         private readonly AppConfig _cfg;
+        /// <summary>Tipos de barra del proyecto, ordenados por diametro.</summary>
         private readonly IList<string> _barTypes;
         private readonly IDictionary<string, double> _diametersMm;
+        /// <summary>Texto de cada tipo en los desplegables ("M12 (12 mm)") y su nombre real.</summary>
+        private readonly Dictionary<string, string> _typeByDisplay = new Dictionary<string, string>();
         private readonly IList<HostAnalysis> _items;
 
         /// <summary>Configuracion final si el usuario pulso "Armar"; null si cancelo.</summary>
@@ -99,8 +102,9 @@ namespace RetainingWallRebar
         {
             _cfg = cfg;
             _cfg.Normalize();
-            _barTypes = barTypes;
             _diametersMm = diametersMm;
+            _barTypes = barTypes.OrderBy(n => diametersMm.TryGetValue(n, out double mm) ? mm : 0).ThenBy(n => n, StringComparer.OrdinalIgnoreCase).ToList();
+            foreach (string n in _barTypes) _typeByDisplay[TypeDisplay(n)] = n;
             _items = items;
 
             foreach (FootingReinfCfg r in _cfg.FootingReinforcements) _reinfStore.Add(r.Clone());
@@ -427,14 +431,36 @@ namespace RetainingWallRebar
             row.Cells.Add(el);
         }
 
+        private string TypeDisplay(string name) =>
+            name + (_diametersMm.TryGetValue(name, out double mm) ? " (" + mm.ToString("0.#", CultureInfo.InvariantCulture) + " mm)" : "");
+
+        /// <summary>
+        /// Desplegable con los tipos de barra cargados en el proyecto, con su diametro. Solo
+        /// se puede elegir uno de ellos: si el nombre guardado no existe, queda sin seleccion
+        /// (en rojo) y el nombre buscado se guarda en Tag para el aviso.
+        /// </summary>
         private ComboBox TypeBox(string current)
         {
-            var cb = new ComboBox { IsEditable = true, Margin = Pad, MinWidth = 120 };
-            foreach (string t in _barTypes) cb.Items.Add(t);
-            cb.Text = RebarGenerator.MatchName(_barTypes, current) ?? current ?? "";
+            var cb = new ComboBox { IsEditable = false, Margin = Pad, MinWidth = 150, Tag = current ?? "" };
+            foreach (string t in _barTypes) cb.Items.Add(TypeDisplay(t));
+            string match = RebarGenerator.MatchName(_barTypes, current);
+            cb.SelectedIndex = match != null ? _barTypes.IndexOf(match) : -1;
             cb.SelectionChanged += (s, e) => Dispatcher.BeginInvoke(new Action(Refresh));
-            cb.LostFocus += (s, e) => Refresh();
             return cb;
+        }
+
+        /// <summary>Nombre real del tipo de barra elegido en un desplegable; "" si no hay ninguno.</summary>
+        private string TypeName(ComboBox cb) =>
+            cb.SelectedItem is string d && _typeByDisplay.TryGetValue(d, out string n) ? n : "";
+
+        /// <summary>Aviso de un desplegable activo sin tipo valido, o null.</summary>
+        private static string MissingType(ComboBox cb, string label)
+        {
+            if (cb == null || !cb.IsEnabled || cb.SelectedIndex >= 0) return null;
+            string wanted = (cb.Tag as string ?? "").Trim();
+            return wanted.Length > 0
+                ? label + ": el tipo de barra \"" + wanted + "\" no existe en este proyecto; elige uno del desplegable"
+                : label + ": elige un tipo de barra";
         }
 
         /// <summary>Activa o desactiva los controles de cada tramo segun modo, caras activas y "mismo armado".</summary>
@@ -523,7 +549,7 @@ namespace RetainingWallRebar
                     else errors?.Add(name + ": cota superior no valida (\"" + row.Top.Text + "\")");
                 }
 
-                string bt = (row.BackType.Text ?? "").Trim();
+                string bt = TypeName(row.BackType);
                 if (bt.Length > 0) z.BackBarTypeName = bt;
                 else if (_backOn.IsChecked == true) errors?.Add(name + ": elige el tipo de barra del trasdos");
                 if (TryParse(row.BackSpacing.Text, out double bs) && bs >= 1) z.BackSpacingMm = bs;
@@ -536,7 +562,7 @@ namespace RetainingWallRebar
                 }
                 else
                 {
-                    string ft = (row.FrontType.Text ?? "").Trim();
+                    string ft = TypeName(row.FrontType);
                     if (ft.Length > 0) z.FrontBarTypeName = ft;
                     else if (_frontOn.IsChecked == true) errors?.Add(name + ": elige el tipo de barra del intrados");
                     if (TryParse(row.FrontSpacing.Text, out double fs) && fs >= 1) z.FrontSpacingMm = fs;
@@ -554,11 +580,11 @@ namespace RetainingWallRebar
             return _selected.Straight ?? _selected.Corner.Wings[0];
         }
 
+        /// <summary>Diametro (pies) del tipo de barra; 0 si el nombre no existe en el proyecto (nunca otro tipo a escondidas).</summary>
         private double DiameterFt(string name)
         {
-            if (_barTypes.Count == 0) return 0;
-            string match = RebarGenerator.MatchName(_barTypes, name) ?? _barTypes[0];
-            return _diametersMm.TryGetValue(match, out double mm) ? WallSection.Mm(mm) : 0;
+            string match = RebarGenerator.MatchName(_barTypes, name);
+            return match != null && _diametersMm.TryGetValue(match, out double mm) ? WallSection.Mm(mm) : 0;
         }
 
         /// <summary>Recalcula el reparto con lo que hay en pantalla, actualiza la tabla y redibuja el esquema.</summary>
@@ -591,6 +617,11 @@ namespace RetainingWallRebar
 
             ZoneLayout layout = StemZones.Resolve(s, scratch, DiameterFt, WingRole.Straight);
             var msgs = new List<string>();
+            foreach (ZoneRow row in _zoneRows.OrderBy(r => r.Index))
+            {
+                string m = MissingType(row.BackType, "Tramo " + (row.Index + 1) + " trasdos") ?? MissingType(row.FrontType, "Tramo " + (row.Index + 1) + " intrados");
+                if (m != null) msgs.Add(m);
+            }
             if (layout.Error != null) msgs.Add(layout.Error);
             msgs.AddRange(layout.Warnings);
             _zoneMessage.Text = string.Join(Environment.NewLine, msgs);
@@ -612,6 +643,11 @@ namespace RetainingWallRebar
                                      "\"  |  \"" + _selected.Partition(scratch, wing, "transversal zapata inferior") + "\"";
 
             var rmsgs = new List<string>();
+            for (int i = 0; i < _reinfRows.Count; i++)
+            {
+                string m = MissingType(_reinfRows[i].Type, "Refuerzo " + (i + 1));
+                if (m != null) rmsgs.Add(m);
+            }
             foreach (FootingReinfCfg r in scratch.FootingReinforcements)
             {
                 SectionBars.Reinforcement(s, scratch, r, DiameterFt, out string warn);
@@ -620,6 +656,11 @@ namespace RetainingWallRebar
             if (_reinfMessage != null) _reinfMessage.Text = string.Join(Environment.NewLine, rmsgs);
 
             var fmsgs = new List<string>();
+            foreach (FamilyRow row in _rows)
+            {
+                string m = MissingType(row.Type, row.Name);
+                if (m != null) fmsgs.Add(m);
+            }
             for (int f = 0; f < 2; f++)
             {
                 SectionBars.Dowel(s, scratch, f == 0, DiameterFt, out string warn);
@@ -668,8 +709,9 @@ namespace RetainingWallRebar
             panel.Children.Add(_familyMessage);
             panel.Children.Add(new TextBlock
             {
-                Text = "Trasdos = cara del talon (vuelo mayor de zapata). El tipo de barra se busca por nombre exacto o " +
-                       "parcial entre los tipos cargados en el proyecto. La patilla inferior de las verticales se apoya sobre " +
+                Text = "Trasdos = cara del talon (vuelo mayor de zapata). Los desplegables listan los tipos de barra cargados " +
+                       "en el proyecto con su diametro; un nombre guardado que no exista queda en rojo hasta que elijas uno, y " +
+                       "nunca se sustituye por otro tipo. La patilla inferior de las verticales se apoya sobre " +
                        "lo mas alto de la parrilla inferior, cruza bajo la pantalla y sobresale la longitud indicada de la cara " +
                        "opuesta; las patillas van apiladas (la del intrados sobre la del trasdos). La patilla de coronacion " +
                        "(0 = sin patilla) se dobla hacia la cara contraria a la altura del recubrimiento de coronacion, la del " +
@@ -705,7 +747,7 @@ namespace RetainingWallRebar
             grid.Children.Add(row.Enabled);
 
             row.Type = TypeBox(fam.BarTypeName);
-            row.Type.MinWidth = 160;
+            row.Type.MinWidth = 190;
             Grid.SetRow(row.Type, r); Grid.SetColumn(row.Type, 2);
             grid.Children.Add(row.Type);
 
@@ -950,7 +992,7 @@ namespace RetainingWallRebar
                 if (TryParse(row.Gap.Text, out double gap) && gap >= 0) c.GapMm = gap;
                 else errors?.Add(name + ": hueco no valido");
 
-                string type = (row.Type.Text ?? "").Trim();
+                string type = TypeName(row.Type);
                 if (type.Length > 0) c.BarTypeName = type;
                 else errors?.Add(name + ": elige un tipo de barra");
                 if (TryParse(row.Spacing.Text, out double sp) && sp >= 1) c.SpacingMm = sp;
@@ -1031,16 +1073,18 @@ namespace RetainingWallRebar
             lap.Children.Add(new TextBlock { Text = "x diametro, minimo", Margin = Pad, VerticalAlignment = VerticalAlignment.Center });
             lap.Children.Add(_lapMin);
             lap.Children.Add(new TextBlock { Text = "mm  (0 y 0 = sin pata)", Margin = Pad, VerticalAlignment = VerticalAlignment.Center });
-            AddControl(grid, "Pata de solape de los horizontales en la esquina", lap);
+            AddControl(grid, "Solape en la esquina (horizontales y longitudinales de zapata)", lap);
 
             _mesh = new ComboBox { Margin = Pad, HorizontalAlignment = HorizontalAlignment.Stretch };
             _mesh.Items.Add("Malla del ala pasante");
-            _mesh.Items.Add("Transversales de las dos alas cruzadas");
+            _mesh.Items.Add("Transversales cruzadas y longitudinales solapadas en el bloque");
             _mesh.ToolTip = "El bloque de esquina es el trozo de zapata donde se cruzan las dos alas.\n" +
                             "- Malla del ala pasante: ahi va solo la malla (transversales y longitudinales) del ala pasante; " +
                             "la otra ala para sus barras de zapata en el borde del bloque.\n" +
-                            "- Transversales de las dos alas cruzadas: las transversales de ambas alas atraviesan el bloque en " +
-                            "dos capas distintas; las longitudinales de ambas paran en el borde.";
+                            "- Transversales cruzadas y longitudinales solapadas: las transversales de ambas alas atraviesan el " +
+                            "bloque en dos capas distintas y las longitudinales de cada ala entran en el bloque la longitud de " +
+                            "solape (la misma regla que los horizontales), paralelas a las transversales de la otra ala, con las " +
+                            "que solapan. Es el detalle de obra.";
             _mesh.SelectedIndex = _cfg.CornerFootingMeshBoth ? 1 : 0;
             AddControl(grid, "Malla de zapata en el bloque de esquina", _mesh);
 
@@ -1186,7 +1230,7 @@ namespace RetainingWallRebar
                 fam.Enabled = row.Enabled.IsChecked == true;
                 if (!fam.Enabled) continue;
 
-                string type = (row.Type.Text ?? "").Trim();
+                string type = TypeName(row.Type);
                 if (type.Length == 0) errors?.Add(row.Name + ": elige un tipo de barra");
                 else fam.BarTypeName = type;
 
@@ -1229,7 +1273,7 @@ namespace RetainingWallRebar
         }
 
         private static bool NumOk(TextBox tb, double min) => !tb.IsEnabled || tb.IsReadOnly || (TryParse(tb.Text, out double v) && v >= min);
-        private static bool TypeOk(ComboBox cb) => !cb.IsEnabled || (cb.Text ?? "").Trim().Length > 0;
+        private static bool TypeOk(ComboBox cb) => !cb.IsEnabled || cb.SelectedIndex >= 0;
 
         private void MarkValidity()
         {

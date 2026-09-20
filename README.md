@@ -71,7 +71,7 @@ se elige en la ventana, global o elemento a elemento):
 | Verticales del alzado (ambas caras) | Hasta la cara exterior del alzado de la otra ala (ocupan la columna de esquina) | Paran a `coverEndMm` de la cara del alzado pasante |
 | Horizontales del alzado (ambas caras) | Giran la esquina en L: llegan hasta la línea de barra de la otra ala y siguen sobre ella una **pata de solape** | Ídem, y se suben un diámetro para no cruzarse con las patas del ala pasante |
 | Transversales y longitudinales de zapata (`cornerFootingMesh = "through"`) | Atraviesan el bloque hasta el borde exterior | Paran en la cara del bloque |
-| Zapata con `cornerFootingMesh = "both"` | Transversales atraviesan; longitudinales paran en el bloque | Transversales atraviesan por la capa interior (capas intercambiadas); longitudinales paran en el bloque |
+| Zapata con `cornerFootingMesh = "both"` | Transversales atraviesan; longitudinales entran en el bloque la longitud de solape (misma regla que los horizontales), paralelas a las transversales de la otra ala | Transversales atraviesan por la capa interior (capas intercambiadas); longitudinales ídem, por la capa exterior |
 
 - Las patas de los horizontales emparejan **cara exterior con exterior** e
   **interior con interior** de la L (exterior = la cara del alzado que queda al
@@ -165,7 +165,9 @@ Al lanzar el comando con uno o varios muros seleccionados se abre una ventana:
    cotas no crecientes).
 3. **Verticales del alzado y zapata**: para cada una de las ocho familias, si
    está activa, el **tipo de barra** (desplegable con los `RebarBarType` cargados
-   en el proyecto; se puede escribir un nombre parcial), la separación, la
+   en el proyecto, ordenados por diámetro y con el diámetro a la vista; si el
+   nombre guardado no existe, la casilla queda en rojo y no se arma hasta
+   elegir uno), la separación, la
    patilla/pata/anclaje donde aplica, la altura de los bastones, la **patilla de
    coronación** de las verticales (0 = sin patilla) y, en los bastones, si van
    **apilados por dentro** de la vertical (con su hueco) o **intercalados** en
@@ -317,8 +319,11 @@ Requisitos previos en el modelo:
   o `RebarHostData.IsValidHost()` devolverá falso.
 - Debe haber al menos una **familia de armadura cargada** (`RebarBarType`).
 - Ajusta `barTypeName` en `config.json` (o en la ventana) a los nombres reales de
-  tus tipos de barra. La búsqueda es por coincidencia parcial, así que `"7/8"`
-  encuentra `ø7/8"`.
+  tus tipos de barra. La búsqueda admite un fragmento (`"7/8"` encuentra
+  `ø7/8"`), pero si no hay coincidencia el plugin **no** sustituye el tipo por
+  otro: la ventana lo marca en rojo y no arma hasta que elijas uno de los
+  cargados. Crea tus tipos (por ejemplo Ø3/8", Ø1/2", Ø5/8") en la plantilla de
+  Revit duplicando uno existente y ajustando su diámetro.
 - El sólido del elemento debe ser **uno solo** y un **prisma recto** o una **L**
   (ver arriba).
 
@@ -358,8 +363,10 @@ Requisitos previos en el modelo:
 - `cornerThroughWing`: `"auto"` (ala de tramo recto más largo), `"1"` o `"2"`.
 - `cornerLapDiameters` (40) y `cornerLapMinMm` (300): pata de solape de los
   horizontales en la esquina.
-- `cornerFootingMesh`: `"through"` (malla del ala pasante en el bloque) o `"both"`
-  (transversales de las dos alas cruzadas).
+- `cornerFootingMesh`: `"through"` (malla del ala pasante en el bloque; la otra
+  ala para en la cara del bloque, sin solape) o `"both"` (transversales de las
+  dos alas cruzadas y longitudinales de cada ala solapadas dentro del bloque con
+  `cornerLapDiameters` / `cornerLapMinMm`, el detalle de obra).
 - `sectionOverrides` permite forzar el canto de zapata si el sondeo falla en
   alguna geometría rara (se aplica a las dos alas de un esquinero).
 - `prismCheckStepMm` (250): separación entre estaciones del muestreo de secciones

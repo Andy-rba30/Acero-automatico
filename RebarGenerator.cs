@@ -224,6 +224,9 @@ namespace RetainingWallRebar
             SectionBars.LongitudinalSet l = SectionBars.Longitudinal(s, cfg, top, Dia(c), c.Plan.SwapFootingLayers, otherDb);
             if (l.Span <= MinSeg) { c.Result.Failed.Add(name + ": no cabe en el ancho de zapata"); return; }
 
+            // en el bloque de esquina con transversales cruzadas, entran la longitud de solape
+            if (c.Plan.LongLapFor != null) wb = Math.Min(wb + c.Plan.LongLapFor(l.Db), c.Plan.LongWMax);
+
             var curves = new List<Curve> { Line.CreateBound(s.P(l.U0, l.V, wa), s.P(l.U0, l.V, wb)) };
 
             Place(c, name, bt, s.DirU, curves, l.Spacing, l.Span, Layout.Array, true);
@@ -520,13 +523,17 @@ namespace RetainingWallRebar
                     "El proyecto no tiene ningun tipo de barra (RebarBarType). Carga una familia de armadura primero.");
 
             string match = MatchName(all.Select(b => b.Name), name);
-            return match != null ? all.First(b => b.Name == match) : all[0];
+            if (match == null)
+                throw new InvalidOperationException(
+                    "el tipo de barra \"" + name + "\" no existe en este proyecto; elige uno de los cargados en la ventana");
+            return all.First(b => b.Name == match);
         }
 
         /// <summary>
         /// Nombre de tipo de barra que corresponde a "name": coincidencia exacta, si no
         /// parcial (sin distinguir mayusculas); null si no hay ninguna. La ventana usa la
-        /// misma regla para que el preview muestre el diametro que despues se creara.
+        /// misma regla para que el preview muestre el diametro que despues se creara, y
+        /// nunca se sustituye por otro tipo: sin coincidencia no se arma.
         /// </summary>
         public static string MatchName(IEnumerable<string> names, string name)
         {
