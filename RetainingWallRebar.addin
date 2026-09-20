@@ -1,5 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <RevitAddIns>
+  <AddIn Type="Application">
+    <Name>ARBA</Name>
+    <Assembly>RetainingWallRebar\RetainingWallRebar.dll</Assembly>
+    <FullClassName>RetainingWallRebar.RibbonApp</FullClassName>
+    <ClientId>3c7e9b12-6d4f-4a8e-b2c1-9f0a5d7e8c21</ClientId>
+    <VendorId>LOCAL</VendorId>
+    <VendorDescription>Uso interno</VendorDescription>
+  </AddIn>
   <AddIn Type="Command">
     <Name>Armar muro de contencion</Name>
     <Text>Armar muro de contencion</Text>
