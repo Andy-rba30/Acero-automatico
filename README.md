@@ -308,10 +308,13 @@ genera su propio juego de conjuntos (nombres `ala 1 ...` / `ala 2 ...`).
 
 1. `dotnet build -c Debug` — el `.csproj` ya copia la DLL, el `config.json` y el
    `.addin` a `%AppData%\Autodesk\Revit\Addins\2027\`.
-2. Abre Revit, selecciona uno o varios muros y lanza el comando desde
-   **Add-Ins → External Tools → Armar muro de contención**.
-3. Si no seleccionas nada antes, el comando te pide que elijas.
-4. Revisa el diagnóstico y el armado en la ventana y pulsa **Armar**.
+2. Abre Revit (si estaba abierto, ciérralo y vuelve a abrirlo: los add-ins se
+   cargan al arrancar). Aparece la pestaña **ARBA** con el botón **Armar muro de
+   contención** (`RibbonApp`, entrada de tipo Application del `.addin`). El
+   comando sigue también en **Add-Ins → External Tools**.
+3. Selecciona uno o varios muros y pulsa el botón.
+4. Si no seleccionas nada antes, el comando te pide que elijas.
+5. Revisa el diagnóstico y el armado en la ventana y pulsa **Armar**.
 
 Requisitos previos en el modelo:
 
