@@ -72,9 +72,11 @@ namespace RetainingWallRebar
             try { pieces = SolidUtils.SplitVolumes(diff); }
             catch { pieces = new List<Solid> { diff }; }
 
+            // restos numericos de la diferencia entre caras coincidentes no cuentan
+            double minVolume = Math.Pow(WallSection.Mm(50), 3);
             foreach (Solid piece in pieces)
             {
-                if (piece == null || piece.Volume < 1e-9) continue;
+                if (piece == null || piece.Volume < minVolume) continue;
                 List<XYZ> pts = WallSection.Vertices(piece).Select(full.ToLocal).ToList();
                 if (pts.Count == 0) continue;
                 double u0 = pts.Min(p => p.X), u1 = pts.Max(p => p.X);

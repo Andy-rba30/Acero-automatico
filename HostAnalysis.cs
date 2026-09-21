@@ -127,6 +127,45 @@ namespace RetainingWallRebar
             });
         }
 
+        /// <summary>
+        /// Intenta leer un solido con huecos como tramo recto con vanos: prisma reconstruido
+        /// desde la seccion completa + clasificacion de lo que falta. True si queda armable
+        /// (a.Straight con vanos). Si los huecos no son vanos validos deja a.Error puesto.
+        /// Si no hay huecos en el alzado (es otra forma), devuelve false sin tocar nada.
+        /// </summary>
+        private static bool TryOpenings(Document doc, Element host, Solid cut, AppConfig cfg, HostAnalysis a)
+        {
+            Solid whole = WallSection.RebuildFullPrism(doc, host, cut, cfg, out _);
+            if (whole == null) return false;
+
+            WallSection.LastError = null;
+            WallSection.LastNotPrism = false;
+            WallSection full = WallSection.ProbeSolid(doc, host, whole, cfg);
+            if (full == null) return false;
+
+            StemOpening.Scan scan = StemOpening.Classify(full, whole, cut, cfg);
+            if (scan.Openings.Count == 0 && scan.InvalidOpening == null) return false;   // lo que falta no esta en el alzado
+            if (scan.InvalidOpening != null)
+            {
+                a.Error = "RECHAZADO, vano mal modelado: " + scan.InvalidOpening + ". Un vano tiene que ser un vacio " +
+                          "rectangular alineado con el muro que atraviese todo el alzado, sin entrar en la zapata (puede " +
+                          "apoyar en su cara superior), sin llegar a coronacion ni a los extremos (ver README). No se ha creado ninguna barra.";
+                return false;
+            }
+            if (scan.CrossingPieces > 0)
+            {
+                a.Error = "RECHAZADO, el muro tiene vanos y ademas le falta hormigon fuera del alzado (" + scan.CrossingPieces +
+                          " trozo(s)); las dos cosas a la vez no estan soportadas. No se ha creado ninguna barra.";
+                return false;
+            }
+            full.Openings = scan.Openings;
+            full.HostSolid = cut;      // nunca una barra en el hueco
+            a.Straight = full;
+            a.CutSolid = cut;
+            a.Uncut = null;
+            return true;
+        }
+
         public static HostAnalysis Analyze(Document doc, Element host, AppConfig cfg)
         {
             var a = new HostAnalysis { Host = host, Tag = "[" + host.Id + " " + host.Name + "] " };
@@ -198,6 +237,12 @@ namespace RetainingWallRebar
 
                 string straightErr = WallSection.LastError ?? "no se pudo deducir la seccion (motivo desconocido)";
                 if (!WallSection.LastNotPrism) { a.Error = straightErr; return a; }
+
+                // 1b. No es un prisma: puede ser un tramo recto con vanos en el alzado que la
+                // geometria original no separa (vacio dentro de la familia). Se reconstruye el
+                // muro entero desde su seccion completa y se mira si lo que falta son vanos.
+                if (TryOpenings(doc, host, solid, cfg, a)) return a;
+                if (a.Error != null) return a;
 
                 // 2. No es un prisma: puede ser un esquinero en L (dos alas perpendiculares).
                 a.Corner = CornerWall.Detect(doc, host, solid, cfg);

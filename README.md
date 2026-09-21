@@ -179,12 +179,15 @@ cruzan el vano y repone el acero cortado junto a él, como piden E.060 y ACI 318
 
 ### Cómo modelar el vano
 
-- **Como un vacío aparte que corta el muro**, no como vacío dentro de la
-  familia del muro: una familia de modelo genérico de vacío (con "Cut with
-  voids when loaded"), colocada sobre el muro y aplicada con Modify → Cut
-  Geometry. Así el plugin lee el muro entero con la geometría original y deduce
-  el vano como el hormigón que falta en el sólido cortado
-  (`StemOpening.Classify`).
+- **Preferiblemente como un vacío aparte que corta el muro**: una familia de
+  modelo genérico de vacío (con "Cut with voids when loaded"), colocada sobre
+  el muro y aplicada con Modify → Cut Geometry. Así el plugin lee el muro
+  entero con la geometría original y deduce el vano como el hormigón que falta
+  en el sólido cortado (`StemOpening.Classify`). **También vale un vacío
+  dentro de la familia** del muro: si el sólido no es un prisma, el plugin
+  reconstruye el muro entero extruyendo su sección completa, la de mayor área
+  entre las estaciones muestreadas (`WallSection.RebuildFullPrism`), y
+  clasifica lo que falta igual que en el otro caso.
 - **Rectangular y alineado** con el muro: caras paralelas y perpendiculares al
   eje, sin inclinar.
 - **Pasante en todo el espesor** del alzado, sobrando por las dos caras.
