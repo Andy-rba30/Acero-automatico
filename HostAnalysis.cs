@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.DB.Structure;
 
@@ -86,6 +87,9 @@ namespace RetainingWallRebar
         public string Detail(AppConfig cfg)
         {
             string d = Error != null ? Error : Straight != null ? Straight.Describe() : Corner.Describe(cfg);
+            if (Error == null && Straight != null && Straight.Openings.Count > 0)
+                d += " (vanos: " + string.Join("; ", Straight.Openings.Select(o => o.Describe())) +
+                     "; las barras se parten en el vano y el acero cortado se repone a los costados y encima/debajo)";
             if (!Joined) return d;
             if (FollowAtCrossing(cfg))
             {
@@ -151,6 +155,35 @@ namespace RetainingWallRebar
                 a.Straight = WallSection.ProbeSolid(doc, host, solid, cfg);
                 if (a.Straight != null)
                 {
+                    if (a.Joined)
+                    {
+                        // Que le falta al solido cortado: vanos del alzado (vacios que lo cortan)
+                        // o el mordisco de otro muro. Con vanos, las barras se comprueban contra
+                        // el hormigon real y se parten en el hueco; con cruce, modos de cruce.
+                        StemOpening.Scan scan = StemOpening.Classify(a.Straight, solid, a.CutSolid, cfg);
+                        if (scan.InvalidOpening != null)
+                        {
+                            a.Error = "RECHAZADO, vano mal modelado: " + scan.InvalidOpening + ". Un vano tiene que ser un vacio " +
+                                      "rectangular alineado con el muro que atraviese todo el alzado, sin entrar en la zapata (puede " +
+                                      "apoyar en su cara superior), sin llegar a coronacion ni a los extremos (ver README). No se ha creado ninguna barra.";
+                            a.Straight = null;
+                            return a;
+                        }
+                        if (scan.Openings.Count > 0 && scan.CrossingPieces > 0)
+                        {
+                            a.Error = "RECHAZADO, el muro tiene vanos y ademas esta cortado por otro elemento (" + scan.CrossingPieces +
+                                      " trozo(s) fuera del alzado); las dos cosas a la vez no estan soportadas. No se ha creado ninguna barra.";
+                            a.Straight = null;
+                            return a;
+                        }
+                        if (scan.Openings.Count > 0)
+                        {
+                            a.Straight.Openings = scan.Openings;
+                            a.Straight.HostSolid = a.CutSolid;   // nunca una barra en el hueco
+                            a.Uncut = null;                       // no es un cruce
+                            return a;
+                        }
+                    }
                     // Muro unido: tramos con la seccion entera del solido cortado, por si
                     // se elige "parar en el cruce" (en la ventana o en config.json).
                     if (a.Joined)
@@ -168,7 +201,16 @@ namespace RetainingWallRebar
 
                 // 2. No es un prisma: puede ser un esquinero en L (dos alas perpendiculares).
                 a.Corner = CornerWall.Detect(doc, host, solid, cfg);
-                if (a.Corner != null) return a;
+                if (a.Corner != null)
+                {
+                    if (a.Joined && a.Uncut.VoidCut)
+                    {
+                        a.Error = "RECHAZADO, esquinero en L cortado por un vacio (vano): los vanos solo estan soportados en tramos rectos. " +
+                                  "No se ha creado ninguna barra.";
+                        a.Corner = null;
+                    }
+                    return a;
+                }
 
                 a.Error = "RECHAZADO, " + straightErr + ". Tampoco es un muro esquinero en L (" +
                           (CornerWall.LastError ?? "motivo desconocido") + "). Los contrafuertes, los escalones, " +

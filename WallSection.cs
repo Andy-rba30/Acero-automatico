@@ -53,6 +53,9 @@ namespace RetainingWallRebar
         /// <summary>Etiqueta para mensajes y nombres de conjuntos ("" en un tramo recto, "ala 1" / "ala 2").</summary>
         public string Label = "";
 
+        /// <summary>Vanos del alzado (solo tramos rectos), ordenados a lo largo del eje. Vacio si no hay.</summary>
+        public List<StemOpening> Openings = new List<StemOpening>();
+
         /// <summary>Motivo del ultimo fallo de Probe, para poder diagnosticar desde el dialogo.</summary>
         public static string LastError;
 
@@ -684,7 +687,7 @@ namespace RetainingWallRebar
             cutSolid = cut.FirstOrDefault();
             if (cut.Count == 0) return cut;
 
-            List<ElementId> others = JoinedOrCutting(e);
+            List<ElementId> others = JoinedOrCutting(e, out bool voidCut);
             List<Solid> whole = null;
             try
             {
@@ -705,7 +708,8 @@ namespace RetainingWallRebar
             {
                 JoinedWith = others.Count == 0 ? "" : " con " + string.Join(", ", others.Select(id => Describe(e.Document, id))),
                 VolumeCut = vCut,
-                VolumeWhole = vWhole
+                VolumeWhole = vWhole,
+                VoidCut = voidCut
             };
             return whole;
         }
@@ -717,6 +721,9 @@ namespace RetainingWallRebar
             public string JoinedWith = "";
             /// <summary>Volumen visible (cortado) y volumen completo, en pies cubicos.</summary>
             public double VolumeCut, VolumeWhole;
+
+            /// <summary>True si algun elemento lo corta con un vacio (Cut Geometry), como un vano.</summary>
+            public bool VoidCut;
 
             private static double M3(double ft3) => ft3 * Math.Pow(MmPerFt / 1000.0, 3);
 
@@ -833,12 +840,19 @@ namespace RetainingWallRebar
             return c;
         }
 
-        /// <summary>Elementos unidos (Unir geometria) o que cortan al elemento.</summary>
-        private static List<ElementId> JoinedOrCutting(Element e)
+        /// <summary>Elementos unidos (Unir geometria) o que cortan al elemento; voidCut = alguno lo corta con un vacio (Cut Geometry).</summary>
+        private static List<ElementId> JoinedOrCutting(Element e, out bool voidCut)
         {
+            voidCut = false;
             var ids = new List<ElementId>();
             try { ids.AddRange(JoinGeometryUtils.GetJoinedElements(e.Document, e)); } catch { }
-            try { ids.AddRange(SolidSolidCutUtils.GetCuttingSolids(e)); } catch { }
+            try
+            {
+                ICollection<ElementId> cutters = SolidSolidCutUtils.GetCuttingSolids(e);
+                voidCut = cutters.Count > 0;
+                ids.AddRange(cutters);
+            }
+            catch { }
             return ids.Distinct().ToList();
         }
 

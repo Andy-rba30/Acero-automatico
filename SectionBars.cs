@@ -36,6 +36,61 @@ namespace RetainingWallRebar
         {
             public List<(double u, double v)> Pts = new List<(double u, double v)>();
             public double Db;
+
+            /// <summary>Longitud desarrollada (pies).</summary>
+            public double Length
+            {
+                get
+                {
+                    double l = 0;
+                    for (int i = 0; i + 1 < Pts.Count; i++)
+                        l += Math.Sqrt(Math.Pow(Pts[i + 1].u - Pts[i].u, 2) + Math.Pow(Pts[i + 1].v - Pts[i].v, 2));
+                    return l;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Parte de la polilinea que queda entre las alturas vMin y vMax (null = sin limite por
+        /// ese lado), cortando los segmentos que las cruzan. Sirve para partir una vertical en
+        /// el borde de un vano: el trozo de abajo conserva su patilla de zapata y el de arriba
+        /// su patilla de coronacion. null si no queda nada.
+        /// </summary>
+        public static Poly Trim(Poly p, double? vMin, double? vMax)
+        {
+            if (p == null) return null;
+            double lo = vMin ?? double.NegativeInfinity, hi = vMax ?? double.PositiveInfinity;
+            var r = new Poly { Db = p.Db };
+            void Add((double u, double v) q)
+            {
+                if (r.Pts.Count > 0)
+                {
+                    var last = r.Pts[r.Pts.Count - 1];
+                    if (Math.Abs(last.u - q.u) < Tiny && Math.Abs(last.v - q.v) < Tiny) return;
+                }
+                r.Pts.Add(q);
+            }
+            bool Inside(double v) => v >= lo - Tiny && v <= hi + Tiny;
+            (double u, double v) At((double u, double v) a, (double u, double v) b, double v)
+            {
+                double t = Math.Abs(b.v - a.v) < 1e-12 ? 0 : (v - a.v) / (b.v - a.v);
+                return (a.u + (b.u - a.u) * t, v);
+            }
+
+            for (int i = 0; i + 1 < p.Pts.Count; i++)
+            {
+                var a = p.Pts[i];
+                var b = p.Pts[i + 1];
+                bool ia = Inside(a.v), ib = Inside(b.v);
+                if (ia && ib) { Add(a); Add(b); continue; }
+                double vlo = Math.Min(a.v, b.v), vhi = Math.Max(a.v, b.v);
+                if (vhi < lo || vlo > hi) continue;             // segmento entero fuera
+                // recorta el segmento al rango [lo, hi]
+                var s0 = ia ? a : At(a, b, a.v < lo ? lo : hi);
+                var s1 = ib ? b : At(a, b, b.v < lo ? lo : hi);
+                Add(s0); Add(s1);
+            }
+            return r.Pts.Count >= 2 ? r : null;
         }
 
         public sealed class LongitudinalSet

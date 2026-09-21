@@ -151,12 +151,112 @@ namespace RetainingWallRebar
                 : SectionBars.Vertical(s, cfg, back, Dia(c), c.Plan.SwapFootingLayers, c.Plan.OtherTransverseBottomDb);
             if (p == null) { c.Result.Failed.Add(name + ": altura no valida"); return; }
 
-            // La barra de definicion va en w = inicio del tramo (recubrimiento de extremo) y
-            // el array avanza desde ahi hasta el final que marca el plan.
-            List<Curve> curves = Curves(s, p, wa);
-            if (curves.Count == 0) { c.Result.Failed.Add(name + ": geometria degenerada"); return; }
+            if (s.Openings.Count == 0)
+            {
+                // La barra de definicion va en w = inicio del tramo (recubrimiento de extremo) y
+                // el array avanza desde ahi hasta el final que marca el plan.
+                List<Curve> curves = Curves(s, p, wa);
+                if (curves.Count == 0) { c.Result.Failed.Add(name + ": geometria degenerada"); return; }
+                Place(c, name, bt, s.DirW, curves, Mm(f.SpacingMm), wb - wa, Layout.ArrayIfLonger, true);
+                return;
+            }
 
-            Place(c, name, bt, s.DirW, curves, Mm(f.SpacingMm), wb - wa, Layout.ArrayIfLonger, true);
+            // --- con vanos: misma reticula de posiciones que el array (n = ceil(L/s) + 1), pero
+            // cada posicion que cae en un vano se parte en un trozo bajo el vano (con su patilla
+            // de zapata) y otro sobre el (con su patilla de coronacion); los grupos contiguos de
+            // posiciones iguales se crean como arrays de numero fijo.
+            double spacing = Mm(f.SpacingMm);
+            double covEnd = Mm(cfg.CoverEndMm);
+            double r = bt.BarNominalDiameter * 0.5;
+            List<double> grid = Grid(wa, wb, spacing, out double step);
+
+            var groups = new List<(int i0, int i1, StemOpening o)>();
+            for (int i = 0; i < grid.Count;)
+            {
+                StemOpening o = s.Openings.FirstOrDefault(x => x.CutsVerticalAt(grid[i], r, covEnd));
+                int j = i;
+                while (j < grid.Count && s.Openings.FirstOrDefault(x => x.CutsVerticalAt(grid[j], r, covEnd)) == o) j++;
+                groups.Add((i, j - 1, o));
+                i = j;
+            }
+
+            foreach (var g in groups)
+            {
+                int count = g.i1 - g.i0 + 1;
+                double w0 = grid[g.i0];
+                double len = (count - 1) * step;
+                if (g.o == null)
+                {
+                    PlacePoly(c, name, bt, p, w0, count, len);
+                    continue;
+                }
+                // trozo bajo el vano (no existe si el vano apoya en la zapata) y trozo sobre el vano
+                double covStem = Mm(cfg.CoverStemMm);
+                if (!g.o.SitsOnFooting)
+                {
+                    SectionBars.Poly low = SectionBars.Trim(p, null, g.o.V0 - covStem - r);
+                    if (low != null && low.Length > Mm(150))
+                        PlacePoly(c, name + " bajo vano " + g.o.Describe(), bt, low, w0, count, len);
+                }
+                SectionBars.Poly up = SectionBars.Trim(p, g.o.V1 + covStem + r, null);
+                if (up != null && up.Length > Mm(150))
+                    PlacePoly(c, name + " sobre vano " + g.o.Describe(), bt, up, w0, count, len);
+            }
+
+            // --- reposicion del acero cortado a los costados del vano (mismo tipo de barra) ---
+            if (dowel || !cfg.OpeningReplaceVerticals) return;
+            double gap = bt.BarNominalDiameter + Mm(5);
+            foreach (StemOpening o in s.Openings)
+            {
+                int cut = grid.Count(w => o.CutsVerticalAt(w, r, covEnd));
+                if (cut == 0) continue;
+                int perSide = (int)Math.Ceiling(cut * cfg.OpeningReplaceFactor / 2.0 - 1e-9);
+                double ld = cfg.OpeningAnchorage(bt.BarNominalDiameter);
+                double? vTop = o.V1 + ld;
+                double? vBot = o.SitsOnFooting ? (double?)null : o.V0 - ld;
+                double pTop = p.Pts.Max(q => q.v), pBot = p.Pts.Min(q => q.v);
+                if (vTop.Value >= pTop - Mm(1)) vTop = null;                 // llega arriba: conserva la patilla de coronacion
+                if (vBot.HasValue && vBot.Value <= s.FootingTop + Mm(1)) vBot = null;   // llega a la zapata: conserva la patilla
+                SectionBars.Poly jamb = SectionBars.Trim(p, vBot, vTop);
+                if (jamb == null) continue;
+
+                string jname = name + " reposicion vano " + o.Describe();
+                foreach (int side in new[] { -1, +1 })
+                {
+                    double w = side < 0 ? o.W0 - covEnd - r : o.W1 + covEnd + r;
+                    for (int k = 0; k < perSide; k++)
+                    {
+                        // no coincidir con una vertical de la reticula (mismo plano): se aparta del vano
+                        int guard = 0;
+                        while (grid.Any(gw => Math.Abs(gw - w) < gap) && guard++ < 20) w += side * gap;
+                        if (w < wa - MinSeg || w > wb + MinSeg) break;
+                        PlacePoly(c, jname + (side < 0 ? " izq " : " der ") + "#" + (k + 1), bt, jamb, w, 1, 0);
+                        w += side * Mm(cfg.OpeningReplaceSpacingMm);
+                    }
+                }
+            }
+        }
+
+        /// <summary>Posiciones de un array de separacion maxima entre wa y wb (n = ceil(L/s) + 1, equiespaciadas).</summary>
+        private static List<double> Grid(double wa, double wb, double spacing, out double step)
+        {
+            var g = new List<double>();
+            double len = wb - wa;
+            int n = len > spacing && spacing > 0 ? (int)Math.Ceiling(len / spacing - 1e-9) + 1 : (len > MinSeg ? 2 : 1);
+            step = n > 1 ? len / (n - 1) : 0;
+            for (int k = 0; k < n; k++) g.Add(wa + k * step);
+            return g;
+        }
+
+        /// <summary>Crea una polilinea de seccion en w como barra suelta o como array de numero fijo a lo largo del muro.</summary>
+        private static void PlacePoly(Ctx c, string name, RebarBarType bt, SectionBars.Poly p, double w, int count, double length)
+        {
+            List<Curve> curves = Curves(c.S, p, w);
+            if (curves.Count == 0) { c.Result.Failed.Add(name + ": geometria degenerada"); return; }
+            if (count >= 2 && length > MinSeg)
+                Place(c, name, bt, c.S.DirW, curves, 0, length, Layout.FixedCount, true, count);
+            else
+                Place(c, name + " w=" + ToMm(w) + " mm", bt, c.S.DirW, curves, 0, 0, Layout.Single, true);
         }
 
         // =================================================================
@@ -269,7 +369,11 @@ namespace RetainingWallRebar
 
             double wa = c.Plan.HorW0;
             double band = Mm(cfg.StemHorizontalBandMm);
+            double covEnd = Mm(cfg.CoverEndMm), covStem = Mm(cfg.CoverStemMm);
             bool any = false;
+
+            // altura de eje de una barra horizontal de diametro db a la cota v (apoyada en la vertical o el baston)
+            double UAt(double v, double db) => face(v) + sign * (SectionBars.HorizontalOffset(s, cfg, back, v, db, dia) + db * 0.5);
 
             foreach (ResolvedZone z in layout.Zones)
             {
@@ -277,21 +381,39 @@ namespace RetainingWallRebar
                 if (f == null || f.Heights.Count == 0) continue;
                 RebarBarType bt = FindBarType(c.Doc, f.BarTypeName);
                 double db = bt.BarNominalDiameter;
+                double r = db * 0.5;
                 string zname = name + (layout.Zones.Count > 1 ? " tramo " + (z.Index + 1) : "");
 
                 // Barra a la altura v (o a la altura media de su banda): tramo recto desde el
-                // extremo libre y, si hay esquina en esta cara, pata sobre la otra ala.
-                List<Curve> BarAt(double v)
+                // extremo libre y, si hay esquina en esta cara, pata sobre la otra ala. Con
+                // vanos a esa altura, la barra se parte en un trozo por cada lado del vano.
+                List<List<Curve>> BarsAt(double v)
                 {
-                    double u = face(v) + sign * (SectionBars.HorizontalOffset(s, cfg, back, v, db, dia) + db * 0.5);
+                    double u = UAt(v, db);
                     double wEnd = corner != null ? corner.OtherBarW(v) : c.Plan.HorW1;
                     if (wEnd - wa <= MinSeg) return null;
-                    var cl = new List<Curve> { Line.CreateBound(s.P(u, v, wa), s.P(u, v, wEnd)) };
-                    double lap = corner != null ? corner.LapFor(db) : 0;
-                    if (lap > MinSeg)
-                        cl.Add(Line.CreateBound(s.P(u, v, wEnd), s.P(u + corner.LegDirU * lap, v, wEnd)));
-                    return cl;
+                    var bars = new List<List<Curve>>();
+                    double start = wa;
+                    foreach (StemOpening o in s.Openings)
+                    {
+                        if (!o.CutsHorizontalAt(v, r, covStem)) continue;
+                        double stop = Math.Min(o.W0 - covEnd, wEnd);
+                        if (stop - start > MinSeg) bars.Add(new List<Curve> { Line.CreateBound(s.P(u, v, start), s.P(u, v, stop)) });
+                        start = Math.Max(start, o.W1 + covEnd);
+                    }
+                    if (wEnd - start > MinSeg)
+                    {
+                        var cl = new List<Curve> { Line.CreateBound(s.P(u, v, start), s.P(u, v, wEnd)) };
+                        double lap = corner != null ? corner.LapFor(db) : 0;
+                        if (lap > MinSeg)
+                            cl.Add(Line.CreateBound(s.P(u, v, wEnd), s.P(u + corner.LegDirU * lap, v, wEnd)));
+                        bars.Add(cl);
+                    }
+                    return bars.Count > 0 ? bars : null;
                 }
+                bool CutAny(double v0, double v1) =>
+                    s.Openings.Any(o => o.CutsHorizontalAt(v0, r, covStem) || o.CutsHorizontalAt(v1, r, covStem) ||
+                                        (o.V0 > v0 && o.V1 < v1));
 
                 // barras por grupo: las que caben en una banda con la separacion real (1 = barra a barra)
                 int per = band <= MinSeg || f.RealSpacing <= MinSeg ? 1 : (int)Math.Floor(band / f.RealSpacing + 1e-9) + 1;
@@ -299,25 +421,83 @@ namespace RetainingWallRebar
                 {
                     int m = Math.Min(per, f.Heights.Count - i);
                     double v0 = f.Heights[i], v1 = f.Heights[i + m - 1];
-                    if (m == 1)
+                    if (m == 1 || CutAny(v0, v1))
                     {
-                        List<Curve> one = BarAt(v0);
-                        if (one == null) continue;
-                        any = true;
-                        Place(c, zname + " v=" + ToMm(v0) + " mm", bt, s.DirV, one, 0, 0, Layout.Single, true);
+                        // barra a barra (siempre a la altura de un vano, para partir cada una donde toca)
+                        for (int k = i; k < i + m; k++)
+                        {
+                            List<List<Curve>> ones = BarsAt(f.Heights[k]);
+                            if (ones == null) continue;
+                            any = true;
+                            for (int q = 0; q < ones.Count; q++)
+                                Place(c, zname + " v=" + ToMm(f.Heights[k]) + " mm" + (ones.Count > 1 ? " trozo " + (q + 1) : ""),
+                                      bt, s.DirV, ones[q], 0, 0, Layout.Single, true);
+                        }
                         continue;
                     }
                     double vMid = (v0 + v1) * 0.5;
-                    List<Curve> cl = BarAt(vMid);
-                    if (cl == null) continue;
+                    List<List<Curve>> mid = BarsAt(vMid);
+                    if (mid == null) continue;
                     any = true;
                     // la barra de definicion va en la base del grupo: se desplaza desde vMid
                     Transform down = Transform.CreateTranslation(s.DirV * (v0 - vMid));
-                    cl = cl.Select(cv => cv.CreateTransformed(down)).ToList();
+                    List<Curve> cl = mid[0].Select(cv => cv.CreateTransformed(down)).ToList();
                     Place(c, zname + " banda v=" + ToMm(v0) + " mm", bt, s.DirV, cl, f.RealSpacing, v1 - v0, Layout.FixedCount, true, m);
                 }
             }
             if (!any) c.Result.Failed.Add(name + ": no cabe ninguna barra en el tramo");
+
+            // --- reposicion de las horizontales cortadas: dintel (encima) y antepecho (debajo),
+            // mismo tipo que la barra cortada, prolongadas el anclaje a cada lado del vano ---
+            if (!cfg.OpeningReplaceHorizontals) return;
+            foreach (StemOpening o in s.Openings)
+            {
+                // barras cortadas de esta cara, por tipo (normalmente uno solo)
+                var cutByType = new Dictionary<string, (RebarBarType bt, int n)>();
+                var heights = new List<double>();
+                foreach (ResolvedZone z in layout.Zones)
+                {
+                    ResolvedFace f = z.Face(back);
+                    if (f == null) continue;
+                    RebarBarType bt = FindBarType(c.Doc, f.BarTypeName);
+                    heights.AddRange(f.Heights);
+                    int n = f.Heights.Count(v => o.CutsHorizontalAt(v, bt.BarNominalDiameter * 0.5, covStem));
+                    if (n == 0) continue;
+                    cutByType[f.BarTypeName] = cutByType.TryGetValue(f.BarTypeName, out var prev) ? (bt, prev.n + n) : (bt, n);
+                }
+                foreach (var kv in cutByType)
+                {
+                    RebarBarType bt = kv.Value.bt;
+                    double db = bt.BarNominalDiameter, r = db * 0.5;
+                    double ld = cfg.OpeningAnchorage(db);
+                    double w0 = Math.Max(c.Plan.HorW0, o.W0 - ld), w1 = Math.Min(c.Plan.HorW1, o.W1 + ld);
+                    if (w1 - w0 <= MinSeg) continue;
+                    int total = (int)Math.Ceiling(kv.Value.n * cfg.OpeningReplaceFactor - 1e-9);
+                    int above = o.SitsOnFooting ? total : (int)Math.Ceiling(total / 2.0 - 1e-9);
+                    int below = total - above;
+                    double gap = db + Mm(5), sRep = Mm(cfg.OpeningReplaceSpacingMm);
+                    double vMax = s.LenV - Mm(cfg.CoverStemTopMm) - r, vMin = s.FootingTop + covStem + r;
+                    string rname = name + " reposicion vano " + o.Describe();
+
+                    void Put(double vStart, int dir, int count, string tag)
+                    {
+                        double v = vStart;
+                        for (int k = 0; k < count; k++)
+                        {
+                            int guard = 0;
+                            while (heights.Any(h => Math.Abs(h - v) < gap) && guard++ < 20) v += dir * gap;
+                            if (v > vMax + MinSeg || v < vMin - MinSeg) break;
+                            double u = UAt(v, db);
+                            var cl = new List<Curve> { Line.CreateBound(s.P(u, v, w0), s.P(u, v, w1)) };
+                            any = true;
+                            Place(c, rname + " " + tag + " #" + (k + 1) + " v=" + ToMm(v) + " mm", bt, s.DirV, cl, 0, 0, Layout.Single, true);
+                            v += dir * sRep;
+                        }
+                    }
+                    Put(o.V1 + covStem + r, +1, above, "dintel");
+                    if (below > 0) Put(o.V0 - covStem - r, -1, below, "antepecho");
+                }
+            }
         }
 
         // =================================================================

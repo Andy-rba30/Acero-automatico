@@ -76,6 +76,8 @@ namespace RetainingWallRebar
         private TextBox _band, _lapDia, _lapMin, _partition;
         private ComboBox _through, _mesh, _crossing;
         private Button _buildButton;
+        private TextBox _openFactor, _openSpacing, _openLdDia, _openLdMin;
+        private CheckBox _openVert, _openHor;
         private TextBlock _partitionPreview;
 
         /// <summary>Texto del diagnostico y etiqueta de tipo de cada fila, para actualizarlos al cambiar el modo de cruce.</summary>
@@ -1163,6 +1165,30 @@ namespace RetainingWallRebar
             _crossing.SelectionChanged += (s, e) => Refresh();
             AddControl(grid, "Muro unido o cortado por otro", _crossing);
 
+            AddHeading(grid, "Vanos en el alzado");
+
+            _openFactor = AddLabeled(grid, "Factor de reposicion del acero cortado (1 = el mismo acero)", _cfg.OpeningReplaceFactor);
+            _openFactor.ToolTip = "Las verticales que corta el vano se reponen a los dos costados y las horizontales encima (dintel) " +
+                                  "y debajo (antepecho), con el mismo diametro, como pide E.060 / ACI 318. Con un vano que apoya en la " +
+                                  "zapata, todas las horizontales repuestas van encima.";
+            _openSpacing = AddLabeled(grid, "Separacion de las barras de reposicion (mm)", _cfg.OpeningReplaceSpacingMm);
+
+            var ld = new StackPanel { Orientation = Orientation.Horizontal };
+            _openLdDia = NumBox(_cfg.OpeningAnchorageDiameters);
+            _openLdMin = NumBox(_cfg.OpeningAnchorageMinMm);
+            ld.Children.Add(_openLdDia);
+            ld.Children.Add(new TextBlock { Text = "x diametro, minimo", Margin = Pad, VerticalAlignment = VerticalAlignment.Center });
+            ld.Children.Add(_openLdMin);
+            ld.Children.Add(new TextBlock { Text = "mm", Margin = Pad, VerticalAlignment = VerticalAlignment.Center });
+            AddControl(grid, "Anclaje de la reposicion mas alla del vano", ld);
+
+            var openChecks = new StackPanel { Orientation = Orientation.Horizontal };
+            _openVert = new CheckBox { Content = "Reponer verticales (costados)", Margin = Pad, IsChecked = _cfg.OpeningReplaceVerticals, VerticalAlignment = VerticalAlignment.Center };
+            _openHor = new CheckBox { Content = "Reponer horizontales (dintel y antepecho)", Margin = Pad, IsChecked = _cfg.OpeningReplaceHorizontals, VerticalAlignment = VerticalAlignment.Center };
+            openChecks.Children.Add(_openVert);
+            openChecks.Children.Add(_openHor);
+            AddControl(grid, "Reposicion", openChecks);
+
             var note = new TextBlock
             {
                 Text = "Solo para muros esquineros. En la esquina, los horizontales de cada ala giran en L sobre la linea " +
@@ -1302,6 +1328,15 @@ namespace RetainingWallRebar
             target.CornerThroughWing = _through.SelectedIndex == 1 ? "1" : _through.SelectedIndex == 2 ? "2" : "auto";
             target.CornerFootingMesh = _mesh.SelectedIndex == 1 ? "both" : "through";
             target.CrossingMode = _crossing == null ? "through" : _crossing.SelectedIndex == 1 ? "stop" : _crossing.SelectedIndex == 2 ? "follow" : "through";
+            if (_openFactor != null)
+            {
+                if (TryNum(_openFactor, "Vanos: factor de reposicion", 0, errors, out v)) target.OpeningReplaceFactor = v;
+                if (TryNum(_openSpacing, "Vanos: separacion de reposicion", 1, errors, out v)) target.OpeningReplaceSpacingMm = v;
+                if (TryNum(_openLdDia, "Vanos: anclaje (diametros)", 0, errors, out v)) target.OpeningAnchorageDiameters = v;
+                if (TryNum(_openLdMin, "Vanos: anclaje (minimo mm)", 0, errors, out v)) target.OpeningAnchorageMinMm = v;
+                target.OpeningReplaceVerticals = _openVert.IsChecked == true;
+                target.OpeningReplaceHorizontals = _openHor.IsChecked == true;
+            }
 
             foreach (FamilyRow row in _rows)
             {
