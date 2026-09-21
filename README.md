@@ -33,6 +33,35 @@ sale cuando ambos vuelos son iguales; no hay dos ramas de código.
 El lado del talón (mayor vuelo) se toma como trasdós. Si en algún caso sale
 invertido, usa `flipAxis` en `sectionOverrides`.
 
+## Muros que se cruzan o están unidos a otros elementos
+
+Cuando dos muros de contención se cruzan y están **unidos** (Unir geometría) o
+uno **corta** al otro, Revit no duplica el hormigón común: se lo queda uno de los
+dos y el otro aparece con un mordisco. Su sección deja de ser constante en ese
+tramo (por ejemplo, solo queda el alzado sin zapata) y el plugin lo rechazaba
+como "no es un prisma recto".
+
+Para evitarlo, el plugin lee la **geometría completa del elemento** antes de
+uniones y cortes (`WallSection.UncutSolids`):
+
+- En familias (`FamilyInstance`) usa `GetOriginalGeometry`, sin tocar el modelo.
+  Como la API no garantiza el sistema de coordenadas en que devuelve esa
+  geometría, se prueba tal cual y transformada por la instancia, y se elige la
+  que contiene al sólido cortado.
+- En muros de sistema desune temporalmente el elemento de los que lo cortan, lee
+  el sólido y deshace la transacción.
+- Solo se usa si de verdad falta hormigón (volumen mayor que el visible); si no,
+  se sigue leyendo la geometría normal.
+
+El diagnóstico de la ventana lo indica entre paréntesis: `unido con [id
+nombre]: se arma con la geometría completa del elemento (x m3 frente a y m3
+visibles), las barras siguen de largo por el cruce`. Es decir, la armadura del
+muro se coloca como si el muro estuviera entero: las barras atraviesan el
+volumen común con el otro muro, como en obra. Si en un cruce concreto quieres
+que un muro pare en el otro, arma solo el pasante o edita las barras después.
+Las comprobaciones de "cada barra dentro del hormigón" se hacen contra ese
+sólido completo.
+
 ## Muros esquineros en L
 
 ### Cómo se detectan (`CornerWall.Detect`)

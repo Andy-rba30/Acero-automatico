@@ -26,6 +26,12 @@ namespace RetainingWallRebar
         /// <summary>Motivo por el que no se puede armar (null si se puede).</summary>
         public string Error;
 
+        /// <summary>
+        /// Aviso informativo: el elemento esta unido o cortado por otros y se ha leido su
+        /// geometria completa (sin el mordisco del cruce). Null si no aplica.
+        /// </summary>
+        public string Note;
+
         public bool CanBuild => Error == null && (Straight != null || Corner != null);
 
         public string Kind => Error != null ? "SIN ARMAR" : Straight != null ? "Tramo recto" : "Esquinero en L";
@@ -33,9 +39,8 @@ namespace RetainingWallRebar
         /// <summary>Descripcion corta para la interfaz y el informe final.</summary>
         public string Detail(AppConfig cfg)
         {
-            if (Error != null) return Error;
-            if (Straight != null) return Straight.Describe();
-            return Corner.Describe(cfg);
+            string d = Error != null ? Error : Straight != null ? Straight.Describe() : Corner.Describe(cfg);
+            return Note == null ? d : d + " (" + Note + ")";
         }
 
         /// <summary>Particion de un juego de barras de este elemento segun la plantilla de la configuracion.</summary>
@@ -64,7 +69,9 @@ namespace RetainingWallRebar
                     return a;
                 }
 
-                Solid solid = WallSection.SingleSolid(host, out string err);
+                // Geometria completa del elemento: si esta unido a otro muro que se cruza,
+                // Revit le habra restado el volumen comun y la seccion no seria constante.
+                Solid solid = WallSection.SingleSolid(host, out string err, out a.Note);
                 if (solid == null) { a.Error = err; return a; }
 
                 // 1. Tramo recto: comprueba PRIMERO que el solido es un prisma recto.
