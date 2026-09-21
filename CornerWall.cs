@@ -255,7 +255,7 @@ namespace RetainingWallRebar
         /// Si hay una cara plana perpendicular al eje cerca de la frontera muestreada (la
         /// cara interior de la zapata de la otra ala), se toma su posicion exacta.
         /// </summary>
-        private static double RefineBoundary(Solid solid, XYZ c, double w0, double boundary, double step)
+        internal static double RefineBoundary(Solid solid, XYZ c, double w0, double boundary, double step)
         {
             double best = boundary, bestD = step * 1.01;
             foreach (Face face in solid.Faces)
@@ -485,7 +485,7 @@ namespace RetainingWallRebar
             double end = s.LenW - cov;
             return new WingPlan
             {
-                Label = "",
+                Label = string.IsNullOrEmpty(s.Label) ? "" : s.Label + " ",
                 VertW0 = cov, VertW1 = end,
                 HorW0 = cov, HorW1 = end,
                 TransW0 = cov, TransW1 = end,

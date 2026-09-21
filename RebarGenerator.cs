@@ -62,8 +62,12 @@ namespace RetainingWallRebar
         /// <summary>Arma un tramo recto completo.</summary>
         public static BuildResult Build(Document doc, HostAnalysis item, AppConfig cfg)
         {
-            WallSection s = item.Straight;
-            return Build(doc, item, s, WingPlan.Straight(s, cfg), cfg, new BuildResult());
+            // Un tramo recto normal es un solo segmento; con "parar en el cruce" puede haber
+            // varios (uno por trozo con la seccion entera), cada uno con sus conjuntos.
+            var result = new BuildResult();
+            foreach (WallSection s in item.Segments(cfg))
+                Build(doc, item, s, WingPlan.Straight(s, cfg), cfg, result);
+            return result;
         }
 
         /// <summary>Arma un tramo (recto o ala de un esquinero) segun su plan, acumulando en result.</summary>

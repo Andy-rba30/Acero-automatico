@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.DB.Structure;
 
@@ -26,16 +27,67 @@ namespace RetainingWallRebar
         /// <summary>Motivo por el que no se puede armar (null si se puede).</summary>
         public string Error;
 
+        // --- muros unidos o cortados por otro elemento (muros que se cruzan) ---
+
+        /// <summary>
+        /// No null si el elemento esta unido o cortado por otros y la seccion se ha leido
+        /// sobre su geometria completa (sin el mordisco del cruce).
+        /// </summary>
+        public WallSection.UncutInfo Uncut;
+
+        /// <summary>Solido tal y como lo ve Revit (con el mordisco), para el modo "parar en el cruce".</summary>
+        public Solid CutSolid;
+
+        /// <summary>
+        /// Tramos con la seccion entera dentro del solido cortado (modo "parar en el cruce").
+        /// Vacio si no hay ninguno (StretchError dice por que). Solo en tramos rectos unidos.
+        /// </summary>
+        public List<WallSection> Stretches = new List<WallSection>();
+        public string StretchError;
+
+        /// <summary>Eleccion por elemento: -1 segun configuracion, 0 pasante, 1 parar en el cruce.</summary>
+        public int CrossingChoice = -1;
+
+        public bool Joined => Uncut != null;
+
+        /// <summary>True si este elemento se arma en modo "parar en el cruce" con esta configuracion.</summary>
+        public bool StopAtCrossing(AppConfig cfg) =>
+            Joined && Straight != null && (CrossingChoice == 1 || (CrossingChoice < 0 && cfg.CrossingStop));
+
+        /// <summary>Segmentos a armar de un tramo recto: el muro entero, o sus tramos intactos si para en el cruce.</summary>
+        public IList<WallSection> Segments(AppConfig cfg) =>
+            StopAtCrossing(cfg) ? (IList<WallSection>)Stretches : new[] { Straight };
+
         public bool CanBuild => Error == null && (Straight != null || Corner != null);
+
+        /// <summary>CanBuild teniendo en cuenta el modo de cruce elegido (sin tramo intacto no hay nada que armar).</summary>
+        public bool CanBuildWith(AppConfig cfg) => CanBuild && !(StopAtCrossing(cfg) && Stretches.Count == 0);
 
         public string Kind => Error != null ? "SIN ARMAR" : Straight != null ? "Tramo recto" : "Esquinero en L";
 
         /// <summary>Descripcion corta para la interfaz y el informe final.</summary>
         public string Detail(AppConfig cfg)
         {
-            if (Error != null) return Error;
-            if (Straight != null) return Straight.Describe();
-            return Corner.Describe(cfg);
+            string d = Error != null ? Error : Straight != null ? Straight.Describe() : Corner.Describe(cfg);
+            if (!Joined) return d;
+            if (!StopAtCrossing(cfg)) return d + " (" + Uncut.ThroughNote() + ")";
+
+            string head = "unido" + Uncut.JoinedWith + ": parar en el cruce, ";
+            if (Stretches.Count == 0)
+                return d + " (" + head + "SIN ARMAR: no hay ningun tramo con la seccion entera (" +
+                       (StretchError ?? "motivo desconocido") + "); elige pasante)";
+
+            double armed = 0;
+            var parts = new List<string>();
+            foreach (WallSection t in Stretches)
+            {
+                double a = (t.Origin - Straight.Origin).DotProduct(Straight.DirW);
+                armed += t.LenW;
+                parts.Add("w=" + WallSection.ToMm(a) + ".." + WallSection.ToMm(a + t.LenW) + " mm");
+            }
+            return d + " (" + head + "se arma solo " + (Stretches.Count == 1 ? "el tramo entero " : "los tramos enteros ") +
+                   string.Join(" y ", parts) + "; quedan " + WallSection.ToMm(Straight.LenW - armed) +
+                   " mm de recorrido sin armar por este muro)";
         }
 
         /// <summary>Particion de un juego de barras de este elemento segun la plantilla de la configuracion.</summary>
@@ -64,14 +116,26 @@ namespace RetainingWallRebar
                     return a;
                 }
 
-                Solid solid = WallSection.SingleSolid(host, out string err);
+                // Geometria completa del elemento: si esta unido a otro muro que se cruza,
+                // Revit le habra restado el volumen comun y la seccion no seria constante.
+                Solid solid = WallSection.SingleSolid(host, out string err, out a.Uncut, out a.CutSolid);
                 if (solid == null) { a.Error = err; return a; }
 
                 // 1. Tramo recto: comprueba PRIMERO que el solido es un prisma recto.
                 WallSection.LastError = null;
                 WallSection.LastNotPrism = false;
                 a.Straight = WallSection.ProbeSolid(doc, host, solid, cfg);
-                if (a.Straight != null) return a;
+                if (a.Straight != null)
+                {
+                    // Muro unido: tramos con la seccion entera del solido cortado, por si
+                    // se elige "parar en el cruce" (en la ventana o en config.json).
+                    if (a.Joined)
+                    {
+                        try { a.Stretches = WallSection.IntactStretches(a.Straight, a.CutSolid, cfg, out a.StretchError); }
+                        catch (Exception ex) { a.Stretches = new List<WallSection>(); a.StretchError = ex.Message; }
+                    }
+                    return a;
+                }
 
                 string straightErr = WallSection.LastError ?? "no se pudo deducir la seccion (motivo desconocido)";
                 if (!WallSection.LastNotPrism) { a.Error = straightErr; return a; }

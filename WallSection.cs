@@ -136,10 +136,18 @@ namespace RetainingWallRebar
         /// sin unir, solo se veria la mayor y se armaria un trozo del muro creyendo que es
         /// el muro entero: se rechaza.
         /// </summary>
-        public static Solid SingleSolid(Element host, out string err)
+        public static Solid SingleSolid(Element host, out string err) => SingleSolid(host, out err, out _, out _);
+
+        /// <summary>
+        /// Igual que SingleSolid, pero leyendo el solido ANTES de las uniones y cortes con
+        /// otros elementos (muros que se cruzan). <paramref name="uncut"/> dice, si se ha
+        /// hecho, que se ha usado la geometria sin cortar (null si no hacia falta) y
+        /// <paramref name="cut"/> es el solido tal y como lo ve Revit (con el mordisco).
+        /// </summary>
+        public static Solid SingleSolid(Element host, out string err, out UncutInfo uncut, out Solid cut)
         {
             err = null;
-            List<Solid> solids = Solids(host);
+            List<Solid> solids = UncutSolids(host, out uncut, out cut);
             if (solids.Count == 0)
             { err = "no se encontro solido en el elemento"; return null; }
 
@@ -631,9 +639,16 @@ namespace RetainingWallRebar
         /// <summary>Todos los solidos con volumen del elemento, de mayor a menor.</summary>
         public static List<Solid> Solids(Element e)
         {
+            GeometryElement ge = e.get_Geometry(GeometryOptions());
+            return ScanSolids(ge);
+        }
+
+        private static Options GeometryOptions() =>
+            new Options { DetailLevel = ViewDetailLevel.Fine, ComputeReferences = false };
+
+        private static List<Solid> ScanSolids(GeometryElement ge)
+        {
             var list = new List<Solid>();
-            var opt = new Options { DetailLevel = ViewDetailLevel.Fine, ComputeReferences = false };
-            GeometryElement ge = e.get_Geometry(opt);
             if (ge == null) return list;
 
             void Scan(IEnumerable<GeometryObject> objs)
@@ -646,6 +661,249 @@ namespace RetainingWallRebar
             }
             Scan(ge);
             return list.OrderByDescending(x => x.Volume).ToList();
+        }
+
+        /// <summary>
+        /// Solidos del elemento tal y como los modela su familia, ANTES de que Revit les
+        /// reste el volumen de los elementos con los que estan unidos (Unir geometria) o
+        /// que los cortan. Cuando dos muros de contencion se cruzan, el hormigon comun se
+        /// lo queda uno de los dos y el otro aparece con un mordisco: su seccion deja de
+        /// ser constante y el plugin lo rechazaba. La armadura de un muro sigue de largo
+        /// por el cruce, asi que se lee la pieza entera.
+        ///
+        /// En familias (FamilyInstance) se usa GetOriginalGeometry. En el resto (muros de
+        /// sistema) se desunen temporalmente los elementos, se lee el solido y se deshace
+        /// la transaccion; si no se puede, se devuelve la geometria cortada.
+        /// <paramref name="info"/> queda a null si no habia nada que recuperar; <paramref name="cutSolid"/>
+        /// es el mayor solido de la geometria cortada (o null si no hay).
+        /// </summary>
+        public static List<Solid> UncutSolids(Element e, out UncutInfo info, out Solid cutSolid)
+        {
+            info = null;
+            List<Solid> cut = Solids(e);
+            cutSolid = cut.FirstOrDefault();
+            if (cut.Count == 0) return cut;
+
+            List<ElementId> others = JoinedOrCutting(e);
+            List<Solid> whole = null;
+            try
+            {
+                if (e is FamilyInstance fi) whole = OriginalSolids(fi, cut[0]);
+                else if (others.Count > 0) whole = UnjoinedSolids(e);
+            }
+            catch
+            {
+                whole = null;
+            }
+            if (whole == null || whole.Count == 0) return cut;
+
+            // Solo tiene sentido si de verdad falta hormigon en la geometria cortada.
+            double vCut = cut.Sum(x => x.Volume), vWhole = whole.Sum(x => x.Volume);
+            if (vWhole <= vCut * (1 + 1e-6)) return cut;
+
+            info = new UncutInfo
+            {
+                JoinedWith = others.Count == 0 ? "" : " con " + string.Join(", ", others.Select(id => Describe(e.Document, id))),
+                VolumeCut = vCut,
+                VolumeWhole = vWhole
+            };
+            return whole;
+        }
+
+        /// <summary>Que se ha recuperado al leer la geometria sin cortar de un elemento unido.</summary>
+        public sealed class UncutInfo
+        {
+            /// <summary>" con [id nombre], ..." o "" si no se pudo saber con que esta unido.</summary>
+            public string JoinedWith = "";
+            /// <summary>Volumen visible (cortado) y volumen completo, en pies cubicos.</summary>
+            public double VolumeCut, VolumeWhole;
+
+            private static double M3(double ft3) => ft3 * Math.Pow(MmPerFt / 1000.0, 3);
+
+            /// <summary>Texto para el modo pasante.</summary>
+            public string ThroughNote() =>
+                "unido" + JoinedWith + ": pasante, se arma con la geometria completa del elemento (" +
+                $"{M3(VolumeWhole):0.00} m3 frente a {M3(VolumeCut):0.00} m3 visibles), las barras siguen de largo por el cruce";
+        }
+
+        // ==================================================================
+        // Modo "parar en el cruce": tramos con la seccion entera del solido cortado
+        // ==================================================================
+
+        /// <summary>
+        /// Tramos del recorrido [0, LenW] de <paramref name="full"/> (seccion leida sobre la
+        /// geometria completa) en los que el solido cortado <paramref name="cut"/> conserva esa
+        /// misma seccion. Cada tramo se devuelve como una WallSection propia: misma seccion,
+        /// origen desplazado, LenW = longitud del tramo y HostSolid = solido cortado, para que
+        /// las comprobaciones de "barra dentro del hormigon" se hagan contra el hormigon real.
+        ///
+        /// Los limites de cada tramo se afinan con la cara plana perpendicular al eje que hay
+        /// ahi (la cara del elemento que corta). Si no la hay (cruce oblicuo), se toma la
+        /// ultima estacion con seccion entera, que es lo conservador: mejor dejar hasta medio
+        /// paso sin armar que poner una barra en el aire. Devuelve la lista vacia, con el
+        /// motivo, si no hay ningun tramo entero o si hay una cara perpendicular dentro de uno.
+        /// </summary>
+        internal static List<WallSection> IntactStretches(WallSection full, Solid cut, AppConfig cfg, out string why)
+        {
+            why = null;
+            var list = new List<WallSection>();
+            if (cut == null) { why = "no hay solido cortado"; return list; }
+
+            double tol = Tol(cfg), step = Step(cfg), half = HalfSlice(cfg);
+            int n = (int)Math.Ceiling(full.LenW / step);
+            n = Math.Max(5, Math.Min(n, 500));
+
+            SectionSample r = SampleSection(full, full.LenW * 0.5, half);
+            if (r == null) { why = "no se pudo leer la seccion completa"; return list; }
+            double areaTol = AreaTol(full, r, tol);
+
+            WallSection probe = full.Stretch(0, full.LenW, cut, "");
+            var ok = new bool[n];
+            for (int i = 0; i < n; i++)
+            {
+                SectionSample sm = SampleSection(probe, full.LenW * (i + 0.5) / n, half);
+                ok[i] = sm != null && SameProfile(r, sm, tol, areaTol, out _);
+            }
+            if (!ok.Any(x => x)) { why = "en ninguna estacion queda la seccion entera"; return list; }
+
+            double w0 = full.Origin.DotProduct(full.DirW);
+            var runs = new List<(double a, double b)>();
+            for (int i = 0; i < n;)
+            {
+                if (!ok[i]) { i++; continue; }
+                int j = i;
+                while (j < n && ok[j]) j++;
+                // limite entre la estacion i-1 (cortada) y la i (entera): cara si la hay, si no la estacion entera
+                double wa = i == 0 ? 0 : FaceNear(cut, full.DirW, w0, full.LenW * i / n, step * 0.5 + tol) ?? full.LenW * (i + 0.5) / n;
+                double wb = j == n ? full.LenW : FaceNear(cut, full.DirW, w0, full.LenW * j / n, step * 0.5 + tol) ?? full.LenW * (j - 0.5) / n;
+                if (wb - wa >= Mm(100)) runs.Add((wa, wb));
+                i = j;
+            }
+            if (runs.Count == 0) { why = "los tramos con seccion entera son demasiado cortos"; return list; }
+
+            // dentro de un tramo entero no puede haber una cara perpendicular al eje (escalon
+            // mas estrecho que el paso de muestreo)
+            foreach (var run in runs)
+            {
+                foreach (Face f in cut.Faces)
+                {
+                    if (!(f is PlanarFace pf) || Math.Abs(pf.FaceNormal.DotProduct(full.DirW)) < 0.999) continue;
+                    double w = pf.Origin.DotProduct(full.DirW) - w0;
+                    if (w > run.a + tol && w < run.b - tol)
+                    {
+                        why = "hay una cara perpendicular al eje dentro del tramo entero (w=" + ToMm(w) + " mm)";
+                        return list;
+                    }
+                }
+            }
+
+            for (int k = 0; k < runs.Count; k++)
+                list.Add(full.Stretch(runs[k].a, runs[k].b, cut, runs.Count > 1 ? "tramo " + (k + 1) : ""));
+            return list;
+        }
+
+        /// <summary>Posicion (w relativo a w0) de la cara plana perpendicular al eje mas cercana a guess, si hay una a menos de maxDist.</summary>
+        private static double? FaceNear(Solid solid, XYZ axis, double w0, double guess, double maxDist)
+        {
+            double? best = null;
+            double bestD = maxDist;
+            foreach (Face f in solid.Faces)
+            {
+                if (!(f is PlanarFace pf) || Math.Abs(pf.FaceNormal.DotProduct(axis)) < 0.999) continue;
+                double w = pf.Origin.DotProduct(axis) - w0;
+                double d = Math.Abs(w - guess);
+                if (d <= bestD) { bestD = d; best = w; }
+            }
+            return best;
+        }
+
+        /// <summary>
+        /// Copia de esta seccion limitada al tramo [wa, wb] de su recorrido, con otro solido
+        /// anfitrion y etiqueta. Canto, caras y ejes se conservan.
+        /// </summary>
+        internal WallSection Stretch(double wa, double wb, Solid solid, string label)
+        {
+            var c = (WallSection)MemberwiseClone();
+            c.Origin = Origin + DirW * wa;
+            c.LenW = wb - wa;
+            c.StemReach = c.LenW;
+            c.BlockLen = 0;
+            c.HostSolid = solid;
+            c.Label = label ?? "";
+            return c;
+        }
+
+        /// <summary>Elementos unidos (Unir geometria) o que cortan al elemento.</summary>
+        private static List<ElementId> JoinedOrCutting(Element e)
+        {
+            var ids = new List<ElementId>();
+            try { ids.AddRange(JoinGeometryUtils.GetJoinedElements(e.Document, e)); } catch { }
+            try { ids.AddRange(SolidSolidCutUtils.GetCuttingSolids(e)); } catch { }
+            return ids.Distinct().ToList();
+        }
+
+        private static string Describe(Document doc, ElementId id)
+        {
+            Element o = doc.GetElement(id);
+            return o == null ? id.ToString() : "[" + id + " " + o.Name + "]";
+        }
+
+        /// <summary>
+        /// Geometria original de la instancia (sin uniones, cortes ni recortes). La API no
+        /// garantiza en que sistema de coordenadas viene, asi que se prueba tal cual y
+        /// transformada por la instancia, y se elige la que contiene al solido cortado.
+        /// </summary>
+        private static List<Solid> OriginalSolids(FamilyInstance fi, Solid cutRef)
+        {
+            List<Solid> raw = ScanSolids(fi.GetOriginalGeometry(GeometryOptions()));
+            if (raw.Count == 0) return null;
+            if (Contains(raw, cutRef)) return raw;
+
+            Transform t = fi.GetTransform();
+            List<Solid> moved = raw.Select(x => SolidUtils.CreateTransformed(x, t)).ToList();
+            if (Contains(moved, cutRef)) return moved;
+            return null;
+        }
+
+        /// <summary>True si la caja de los solidos contiene la caja de <paramref name="inner"/> (con tolerancia).</summary>
+        private static bool Contains(List<Solid> outer, Solid inner)
+        {
+            double tol = Mm(5);
+            List<XYZ> o = outer.SelectMany(x => Vertices(x)).ToList();
+            List<XYZ> i = Vertices(inner);
+            if (o.Count == 0 || i.Count == 0) return false;
+            return o.Min(p => p.X) <= i.Min(p => p.X) + tol && o.Max(p => p.X) >= i.Max(p => p.X) - tol &&
+                   o.Min(p => p.Y) <= i.Min(p => p.Y) + tol && o.Max(p => p.Y) >= i.Max(p => p.Y) - tol &&
+                   o.Min(p => p.Z) <= i.Min(p => p.Z) + tol && o.Max(p => p.Z) >= i.Max(p => p.Z) - tol;
+        }
+
+        /// <summary>
+        /// Desune temporalmente el elemento de todos los que lo cortan, lee su solido y
+        /// deshace el cambio. Solo para elementos sin GetOriginalGeometry (muros de sistema).
+        /// </summary>
+        private static List<Solid> UnjoinedSolids(Element e)
+        {
+            Document doc = e.Document;
+            if (doc.IsReadOnly || doc.IsModifiable) return null;
+            using (var tx = new Transaction(doc, "Leer geometria sin unir (temporal)"))
+            {
+                tx.Start();
+                try
+                {
+                    foreach (ElementId id in JoinGeometryUtils.GetJoinedElements(doc, e).ToList())
+                    {
+                        Element o = doc.GetElement(id);
+                        if (o != null && JoinGeometryUtils.AreElementsJoined(doc, e, o))
+                            JoinGeometryUtils.UnjoinGeometry(doc, e, o);
+                    }
+                    doc.Regenerate();
+                    return Solids(e);
+                }
+                finally
+                {
+                    tx.RollBack();
+                }
+            }
         }
 
         public static Solid LargestSolid(Element e) => Solids(e).FirstOrDefault();

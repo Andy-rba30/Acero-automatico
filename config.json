@@ -16,6 +16,8 @@
   "cornerLapMinMm": 300,
   "cornerFootingMesh": "through",
 
+  "crossingMode": "through",
+
   "partitionTemplate": "MC-{marca}",
 
   "stemVerticalBack":  { "enabled": true, "barTypeName": "", "spacingMm": 200, "legMm": 900, "crownLegMm": 0 },

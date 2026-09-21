@@ -216,6 +216,22 @@ namespace RetainingWallRebar
         /// </summary>
         public string CornerFootingMesh { get; set; } = "through";
 
+        // --- muros que se cruzan (unidos o cortados por otro elemento) ---
+
+        /// <summary>
+        /// Que hacer con un muro al que otro elemento le ha quitado hormigon (Unir geometria o corte):
+        ///  "through" = pasante: se arma con la geometria completa de la familia y las barras
+        ///              siguen de largo por el cruce, dentro del volumen que Revit le ha dado al otro.
+        ///  "stop"    = parar en el cruce: se arma solo el tramo (o tramos) donde la seccion esta
+        ///              entera; las barras terminan a CoverEndMm de la cara donde empieza el mordisco.
+        /// Se puede cambiar elemento a elemento desde la interfaz.
+        /// </summary>
+        public string CrossingMode { get; set; } = "through";
+
+        [JsonIgnore]
+        public bool CrossingStop =>
+            string.Equals((CrossingMode ?? "").Trim(), "stop", StringComparison.OrdinalIgnoreCase);
+
         /// <summary>Overrides por nombre de tipo de familia.</summary>
         public Dictionary<string, SectionOverride> SectionOverrides { get; set; }
             = new Dictionary<string, SectionOverride>(StringComparer.OrdinalIgnoreCase);

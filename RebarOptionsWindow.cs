@@ -74,8 +74,13 @@ namespace RetainingWallRebar
         private TextBlock _reinfMessage, _familyMessage;
         private TextBox _covStem, _covStemTop, _covFootTop, _covFootBot, _covFootSide, _covEnd;
         private TextBox _band, _lapDia, _lapMin, _partition;
-        private ComboBox _through, _mesh;
+        private ComboBox _through, _mesh, _crossing;
+        private Button _buildButton;
         private TextBlock _partitionPreview;
+
+        /// <summary>Texto del diagnostico y etiqueta de tipo de cada fila, para actualizarlos al cambiar el modo de cruce.</summary>
+        private readonly Dictionary<HostAnalysis, (System.Windows.Documents.Run kind, System.Windows.Documents.Run detail)> _itemRuns
+            = new Dictionary<HostAnalysis, (System.Windows.Documents.Run, System.Windows.Documents.Run)>();
 
         // --- tramos de horizontales ---
         /// <summary>Siempre 3 tramos guardados, para que al pasar de 3 a 1 y volver no se pierdan los valores.</summary>
@@ -195,14 +200,36 @@ namespace RetainingWallRebar
 
                 var text = new TextBlock { TextWrapping = TextWrapping.Wrap, VerticalAlignment = VerticalAlignment.Center };
                 text.Inlines.Add(new System.Windows.Documents.Run(item.Tag) { FontWeight = FontWeights.Bold });
-                text.Inlines.Add(new System.Windows.Documents.Run(item.Kind + ": ")
+                var kindRun = new System.Windows.Documents.Run(item.Kind + ": ")
                 {
                     FontWeight = FontWeights.SemiBold,
-                    Foreground = item.CanBuild ? Brushes.DarkGreen : Brushes.Firebrick
-                });
-                text.Inlines.Add(new System.Windows.Documents.Run(item.Detail(_cfg)));
+                    Foreground = item.CanBuildWith(_cfg) ? Brushes.DarkGreen : Brushes.Firebrick
+                };
+                var detailRun = new System.Windows.Documents.Run(item.Detail(_cfg));
+                text.Inlines.Add(kindRun);
+                text.Inlines.Add(detailRun);
+                _itemRuns[item] = (kindRun, detailRun);
                 Grid.SetColumn(text, 0);
                 row.Children.Add(text);
+
+                if (item.Joined && item.Straight != null)
+                {
+                    var side = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(8, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
+                    side.Children.Add(new TextBlock { Text = "Cruce:", Margin = new Thickness(0, 0, 4, 0), VerticalAlignment = VerticalAlignment.Center });
+                    var combo = new ComboBox { Width = 190 };
+                    combo.Items.Add("Segun configuracion");
+                    combo.Items.Add("Pasante (geometria completa)");
+                    combo.Items.Add("Parar en el cruce (tramo entero)");
+                    combo.SelectedIndex = item.CrossingChoice + 1;
+                    combo.ToolTip = "Este muro esta unido a otro elemento que le quita hormigon. Pasante: las barras siguen de largo por el " +
+                                    "cruce. Parar en el cruce: se arma solo el tramo donde la seccion esta entera y las barras terminan " +
+                                    "a un recubrimiento de extremo de la cara del otro elemento.";
+                    HostAnalysis joined = item;
+                    combo.SelectionChanged += (s, e) => { joined.CrossingChoice = combo.SelectedIndex - 1; Refresh(); };
+                    side.Children.Add(combo);
+                    Grid.SetColumn(side, 1);
+                    row.Children.Add(side);
+                }
 
                 if (item.Corner != null)
                 {
@@ -238,6 +265,22 @@ namespace RetainingWallRebar
                 HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled
             };
             return group;
+        }
+
+        /// <summary>El modo de cruce cambia el diagnostico y si el elemento se puede armar: se actualizan filas y boton.</summary>
+        private void RefreshItemRows(AppConfig scratch)
+        {
+            foreach (var kv in _itemRuns)
+            {
+                kv.Value.kind.Foreground = kv.Key.CanBuildWith(scratch) ? Brushes.DarkGreen : Brushes.Firebrick;
+                kv.Value.detail.Text = kv.Key.Detail(scratch);
+            }
+            if (_buildButton != null)
+            {
+                int ok = _items.Count(i => i.CanBuildWith(scratch));
+                _buildButton.Content = "Armar " + ok + " elemento(s)";
+                _buildButton.IsEnabled = ok > 0;
+            }
         }
 
         private void SelectItem(HostAnalysis item)
@@ -607,6 +650,7 @@ namespace RetainingWallRebar
         {
             var scratch = _cfg.Clone();
             ReadUi(scratch, null);
+            RefreshItemRows(scratch);
 
             WallSection s = SelectedSection();
             if (s == null)
@@ -1097,6 +1141,21 @@ namespace RetainingWallRebar
             _mesh.SelectedIndex = _cfg.CornerFootingMeshBoth ? 1 : 0;
             AddControl(grid, "Malla de zapata en el bloque de esquina", _mesh);
 
+            AddHeading(grid, "Muros que se cruzan");
+
+            _crossing = new ComboBox { Margin = Pad, HorizontalAlignment = HorizontalAlignment.Stretch };
+            _crossing.Items.Add("Pasante: geometria completa, las barras siguen de largo por el cruce");
+            _crossing.Items.Add("Parar en el cruce: solo el tramo con la seccion entera");
+            _crossing.SelectedIndex = _cfg.CrossingStop ? 1 : 0;
+            _crossing.ToolTip = "Cuando dos muros se cruzan y estan unidos, Revit le quita a uno de ellos el hormigon comun. " +
+                                "Pasante: ese muro se lee con la geometria completa de su familia y se arma entero, con las barras " +
+                                "dentro del volumen que Revit le ha dado al otro. Parar en el cruce: se arma solo el tramo (o tramos) " +
+                                "donde la seccion esta entera; las barras terminan a un recubrimiento de extremo de la cara del otro " +
+                                "elemento y el resto del hormigon (por ejemplo el alzado sobre la zapata del otro muro) queda sin " +
+                                "armar por este muro. Se puede cambiar elemento a elemento en la lista de arriba.";
+            _crossing.SelectionChanged += (s, e) => Refresh();
+            AddControl(grid, "Muro unido o cortado por otro", _crossing);
+
             var note = new TextBlock
             {
                 Text = "Solo para muros esquineros. En la esquina, los horizontales de cada ala giran en L sobre la linea " +
@@ -1130,7 +1189,7 @@ namespace RetainingWallRebar
             Grid.SetColumn(save, 0);
             panel.Children.Add(save);
 
-            int ok = _items.Count(i => i.CanBuild);
+            int ok = _items.Count(i => i.CanBuildWith(_cfg));
             var build = new Button
             {
                 Content = "Armar " + ok + " elemento(s)",
@@ -1142,6 +1201,7 @@ namespace RetainingWallRebar
             build.Click += OnBuild;
             Grid.SetColumn(build, 2);
             panel.Children.Add(build);
+            _buildButton = build;
 
             var cancel = new Button { Content = "Cancelar", IsCancel = true, Padding = new Thickness(16, 4, 16, 4) };
             Grid.SetColumn(cancel, 3);
@@ -1234,6 +1294,7 @@ namespace RetainingWallRebar
             else target.PartitionTemplate = tpl;
             target.CornerThroughWing = _through.SelectedIndex == 1 ? "1" : _through.SelectedIndex == 2 ? "2" : "auto";
             target.CornerFootingMesh = _mesh.SelectedIndex == 1 ? "both" : "through";
+            target.CrossingMode = _crossing != null && _crossing.SelectedIndex == 1 ? "stop" : "through";
 
             foreach (FamilyRow row in _rows)
             {

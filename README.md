@@ -33,6 +33,65 @@ sale cuando ambos vuelos son iguales; no hay dos ramas de código.
 El lado del talón (mayor vuelo) se toma como trasdós. Si en algún caso sale
 invertido, usa `flipAxis` en `sectionOverrides`.
 
+## Muros que se cruzan o están unidos a otros elementos
+
+Cuando dos muros de contención se cruzan y están **unidos** (Unir geometría) o
+uno **corta** al otro, Revit no duplica el hormigón común: se lo queda uno de los
+dos y el otro aparece con un mordisco. Su sección deja de ser constante en ese
+tramo (por ejemplo, solo queda el alzado sin zapata) y el plugin lo rechazaba
+como "no es un prisma recto".
+
+Para evitarlo, el plugin lee la **geometría completa del elemento** antes de
+uniones y cortes (`WallSection.UncutSolids`):
+
+- En familias (`FamilyInstance`) usa `GetOriginalGeometry`, sin tocar el modelo.
+  Como la API no garantiza el sistema de coordenadas en que devuelve esa
+  geometría, se prueba tal cual y transformada por la instancia, y se elige la
+  que contiene al sólido cortado.
+- En muros de sistema desune temporalmente el elemento de los que lo cortan, lee
+  el sólido y deshace la transacción.
+- Solo se usa si de verdad falta hormigón (volumen mayor que el visible); si no,
+  se sigue leyendo la geometría normal.
+
+Con la geometría completa en la mano, hay dos formas de armar ese muro. Se
+eligen con `crossingMode` en `config.json` (valor por defecto) y, elemento a
+elemento, con el desplegable **Cruce** que aparece junto a cada muro unido en la
+lista de la ventana:
+
+- **Pasante** (`"through"`, por defecto): la armadura se coloca como si el muro
+  estuviera entero. Las barras atraviesan el volumen común con el otro muro,
+  como en obra, y las comprobaciones de "cada barra dentro del hormigón" se
+  hacen contra el sólido completo. El diagnóstico dice `unido con [id nombre]:
+  pasante, se arma con la geometría completa del elemento (x m3 frente a y m3
+  visibles), las barras siguen de largo por el cruce`.
+- **Parar en el cruce** (`"stop"`): se arma solo el tramo (o tramos) del muro
+  donde el sólido cortado conserva la sección entera. Las barras terminan a
+  `coverEndMm` de la cara del elemento que corta, igual que en un extremo
+  libre, y todas las comprobaciones se hacen contra el sólido cortado (el
+  hormigón real de ese muro). El diagnóstico dice qué tramos se arman (`w=a..b
+  mm`) y cuántos milímetros de recorrido quedan sin armar por este muro. Si el
+  otro muro cruza por el medio, cada tramo entero se arma como un muro corto
+  independiente, con sus conjuntos etiquetados `tramo 1` / `tramo 2`.
+
+  Lo que hay que asumir con este modo: **el hormigón que no tiene la sección
+  entera queda sin armar por este muro**. Por ejemplo, si el alzado sigue por
+  encima de la zapata del otro muro, ese trozo de alzado no lo arma nadie
+  salvo que el otro muro (armado como pasante) lo cubra. Si no queda ningún
+  tramo entero, el elemento aparece en rojo y no se arma hasta elegir
+  pasante.
+
+  Cómo se detectan los tramos (`WallSection.IntactStretches`): se muestrea el
+  sólido cortado en estaciones a lo largo del eje (cada `prismCheckStepMm`) y
+  se compara cada sección con la central de la geometría completa (misma
+  comparación que la de prisma recto). Los tramos contiguos de estaciones con
+  sección entera son los tramos armables; su límite se afina con la cara plana
+  perpendicular al eje que hay ahí (la cara del elemento que corta). Si no la
+  hay (cruce oblicuo), se toma la última estación entera, lo conservador. Una
+  cara perpendicular al eje dentro de un tramo entero (escalón más estrecho
+  que el paso) rechaza el modo. Tramos de menos de 100 mm se descartan.
+
+Los esquineros en L unidos a un tercer elemento solo admiten el modo pasante.
+
 ## Muros esquineros en L
 
 ### Cómo se detectan (`CornerWall.Detect`)
@@ -370,6 +429,9 @@ Requisitos previos en el modelo:
 - `cornerThroughWing`: `"auto"` (ala de tramo recto más largo), `"1"` o `"2"`.
 - `cornerLapDiameters` (40) y `cornerLapMinMm` (300): pata de solape de los
   horizontales en la esquina.
+- `crossingMode`: `"through"` (pasante, por defecto) o `"stop"` (parar en el
+  cruce) para los muros unidos o cortados por otro elemento. Ver [Muros que se
+  cruzan](#muros-que-se-cruzan-o-están-unidos-a-otros-elementos).
 - `cornerFootingMesh`: `"through"` (malla del ala pasante en el bloque; la otra
   ala para en la cara del bloque, sin solape) o `"both"` (transversales de las
   dos alas cruzadas y longitudinales de cada ala solapadas dentro del bloque con
