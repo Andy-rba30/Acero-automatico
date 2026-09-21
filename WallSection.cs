@@ -803,7 +803,7 @@ namespace RetainingWallRebar
         }
 
         /// <summary>Posicion (w relativo a w0) de la cara plana perpendicular al eje mas cercana a guess, si hay una a menos de maxDist.</summary>
-        private static double? FaceNear(Solid solid, XYZ axis, double w0, double guess, double maxDist)
+        internal static double? FaceNear(Solid solid, XYZ axis, double w0, double guess, double maxDist)
         {
             double? best = null;
             double bestD = maxDist;

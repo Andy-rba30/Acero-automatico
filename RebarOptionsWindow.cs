@@ -220,10 +220,13 @@ namespace RetainingWallRebar
                     combo.Items.Add("Segun configuracion");
                     combo.Items.Add("Pasante (geometria completa)");
                     combo.Items.Add("Parar en el cruce (tramo entero)");
+                    combo.Items.Add("Seguir la forma cortada (con traslape)");
                     combo.SelectedIndex = item.CrossingChoice + 1;
                     combo.ToolTip = "Este muro esta unido a otro elemento que le quita hormigon. Pasante: las barras siguen de largo por el " +
                                     "cruce. Parar en el cruce: se arma solo el tramo donde la seccion esta entera y las barras terminan " +
-                                    "a un recubrimiento de extremo de la cara del otro elemento.";
+                                    "a un recubrimiento de extremo de la cara del otro elemento. Seguir la forma cortada: las barras del " +
+                                    "alzado van hasta donde llega el alzado y las de zapata hasta donde llega la zapata, y en el corte " +
+                                    "cada familia se prolonga el traslape de esquina dentro del otro elemento.";
                     HostAnalysis joined = item;
                     combo.SelectionChanged += (s, e) => { joined.CrossingChoice = combo.SelectedIndex - 1; Refresh(); };
                     side.Children.Add(combo);
@@ -1146,13 +1149,17 @@ namespace RetainingWallRebar
             _crossing = new ComboBox { Margin = Pad, HorizontalAlignment = HorizontalAlignment.Stretch };
             _crossing.Items.Add("Pasante: geometria completa, las barras siguen de largo por el cruce");
             _crossing.Items.Add("Parar en el cruce: solo el tramo con la seccion entera");
-            _crossing.SelectedIndex = _cfg.CrossingStop ? 1 : 0;
+            _crossing.Items.Add("Seguir la forma cortada: cada familia hasta su hormigon, mas el traslape de esquina");
+            _crossing.SelectedIndex = _cfg.CrossingIndex;
             _crossing.ToolTip = "Cuando dos muros se cruzan y estan unidos, Revit le quita a uno de ellos el hormigon comun. " +
                                 "Pasante: ese muro se lee con la geometria completa de su familia y se arma entero, con las barras " +
                                 "dentro del volumen que Revit le ha dado al otro. Parar en el cruce: se arma solo el tramo (o tramos) " +
                                 "donde la seccion esta entera; las barras terminan a un recubrimiento de extremo de la cara del otro " +
                                 "elemento y el resto del hormigon (por ejemplo el alzado sobre la zapata del otro muro) queda sin " +
-                                "armar por este muro. Se puede cambiar elemento a elemento en la lista de arriba.";
+                                "armar por este muro. Seguir la forma cortada: verticales, bastones y horizontales van hasta donde " +
+                                "llega el alzado; transversales, refuerzos y longitudinales hasta donde llega la zapata; en el extremo " +
+                                "cortado cada familia se prolonga el traslape de esquina (diametros y minimo de arriba) dentro del " +
+                                "otro elemento. Se puede cambiar elemento a elemento en la lista de arriba.";
             _crossing.SelectionChanged += (s, e) => Refresh();
             AddControl(grid, "Muro unido o cortado por otro", _crossing);
 
@@ -1294,7 +1301,7 @@ namespace RetainingWallRebar
             else target.PartitionTemplate = tpl;
             target.CornerThroughWing = _through.SelectedIndex == 1 ? "1" : _through.SelectedIndex == 2 ? "2" : "auto";
             target.CornerFootingMesh = _mesh.SelectedIndex == 1 ? "both" : "through";
-            target.CrossingMode = _crossing != null && _crossing.SelectedIndex == 1 ? "stop" : "through";
+            target.CrossingMode = _crossing == null ? "through" : _crossing.SelectedIndex == 1 ? "stop" : _crossing.SelectedIndex == 2 ? "follow" : "through";
 
             foreach (FamilyRow row in _rows)
             {

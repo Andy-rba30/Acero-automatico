@@ -53,7 +53,7 @@ uniones y cortes (`WallSection.UncutSolids`):
 - Solo se usa si de verdad falta hormigón (volumen mayor que el visible); si no,
   se sigue leyendo la geometría normal.
 
-Con la geometría completa en la mano, hay dos formas de armar ese muro. Se
+Con la geometría completa en la mano, hay tres formas de armar ese muro. Se
 eligen con `crossingMode` en `config.json` (valor por defecto) y, elemento a
 elemento, con el desplegable **Cruce** que aparece junto a cada muro unido en la
 lista de la ventana:
@@ -89,6 +89,30 @@ lista de la ventana:
   hay (cruce oblicuo), se toma la última estación entera, lo conservador. Una
   cara perpendicular al eje dentro de un tramo entero (escalón más estrecho
   que el paso) rechaza el modo. Tramos de menos de 100 mm se descartan.
+
+- **Seguir la forma cortada** (`"follow"`): el detalle de obra. Cada familia
+  de barras va hasta donde llega **su** parte del hormigón en el sólido
+  cortado: verticales, bastones y horizontales hasta donde llega el alzado;
+  transversales, refuerzos y longitudinales hasta donde llega la zapata. En
+  un extremo libre se aplica `coverEndMm`; en el extremo cortado cada familia
+  se prolonga dentro del otro elemento la longitud de **traslape** de esquina,
+  máx(`cornerLapDiameters` × Ø, `cornerLapMinMm`) con el mayor diámetro de las
+  familias del grupo, sin salir nunca del muro completo. Las comprobaciones
+  se hacen contra el sólido completo, porque el traslape queda dentro del
+  volumen del otro muro. En el ejemplo del hangar: el alzado sigue hasta el
+  final (sus verticales apoyan con su patilla normal dentro de la zapata del
+  otro muro) y la zapata para en la cara de la zapata ajena más el traslape.
+
+  Cómo se detecta (`CrossingWall.Detect`): se muestrea el sólido cortado a lo
+  largo del eje, por separado el alzado (por encima de la cara superior de
+  zapata) y la zapata (por debajo), y se compara el volumen de cada rebanada
+  con el de la geometría completa. Una estación cuenta como entera solo si
+  conserva prácticamente todo el hormigón de esa parte (un corte parcial del
+  ancho cuenta como cortada). Cada parte tiene que quedar en un **único tramo
+  contiguo**: si el otro elemento la parte en dos, o no queda nada de ella,
+  el modo se rechaza con el motivo y el elemento queda en rojo hasta elegir
+  otro. Los límites se afinan con la cara perpendicular del elemento que
+  corta o, si no la hay, con la última estación entera.
 
 Los esquineros en L unidos a un tercer elemento solo admiten el modo pasante.
 
@@ -429,8 +453,10 @@ Requisitos previos en el modelo:
 - `cornerThroughWing`: `"auto"` (ala de tramo recto más largo), `"1"` o `"2"`.
 - `cornerLapDiameters` (40) y `cornerLapMinMm` (300): pata de solape de los
   horizontales en la esquina.
-- `crossingMode`: `"through"` (pasante, por defecto) o `"stop"` (parar en el
-  cruce) para los muros unidos o cortados por otro elemento. Ver [Muros que se
+- `crossingMode`: `"through"` (pasante, por defecto), `"stop"` (parar en el
+  cruce) o `"follow"` (seguir la forma cortada, con el traslape de
+  `cornerLapDiameters` / `cornerLapMinMm`) para los muros unidos o cortados
+  por otro elemento. Ver [Muros que se
   cruzan](#muros-que-se-cruzan-o-están-unidos-a-otros-elementos).
 - `cornerFootingMesh`: `"through"` (malla del ala pasante en el bloque; la otra
   ala para en la cara del bloque, sin solape) o `"both"` (transversales de las

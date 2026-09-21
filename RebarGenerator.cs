@@ -66,7 +66,12 @@ namespace RetainingWallRebar
             // varios (uno por trozo con la seccion entera), cada uno con sus conjuntos.
             var result = new BuildResult();
             foreach (WallSection s in item.Segments(cfg))
-                Build(doc, item, s, WingPlan.Straight(s, cfg), cfg, result);
+            {
+                WingPlan plan = item.FollowAtCrossing(cfg)
+                    ? CrossingWall.FollowPlan(doc, s, item.FollowParts, cfg)
+                    : WingPlan.Straight(s, cfg);
+                Build(doc, item, s, plan, cfg, result);
+            }
             return result;
         }
 

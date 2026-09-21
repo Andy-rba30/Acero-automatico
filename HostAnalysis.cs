@@ -45,14 +45,30 @@ namespace RetainingWallRebar
         public List<WallSection> Stretches = new List<WallSection>();
         public string StretchError;
 
-        /// <summary>Eleccion por elemento: -1 segun configuracion, 0 pasante, 1 parar en el cruce.</summary>
+        /// <summary>
+        /// Tramos de alzado y zapata enteros en el solido cortado (modo "seguir la forma
+        /// cortada"). Null si el modo no es posible en este muro (FollowError dice por que).
+        /// </summary>
+        public CrossingWall.CutParts FollowParts;
+        public string FollowError;
+
+        /// <summary>Eleccion por elemento: -1 segun configuracion, 0 pasante, 1 parar en el cruce, 2 seguir la forma cortada.</summary>
         public int CrossingChoice = -1;
 
         public bool Joined => Uncut != null;
 
+        /// <summary>Modo de cruce efectivo de este elemento (0/1/2), o -1 si no esta unido o no es un tramo recto.</summary>
+        public int CrossingModeFor(AppConfig cfg)
+        {
+            if (!Joined || Straight == null) return -1;
+            return CrossingChoice >= 0 ? CrossingChoice : cfg.CrossingIndex;
+        }
+
         /// <summary>True si este elemento se arma en modo "parar en el cruce" con esta configuracion.</summary>
-        public bool StopAtCrossing(AppConfig cfg) =>
-            Joined && Straight != null && (CrossingChoice == 1 || (CrossingChoice < 0 && cfg.CrossingStop));
+        public bool StopAtCrossing(AppConfig cfg) => CrossingModeFor(cfg) == 1;
+
+        /// <summary>True si este elemento se arma en modo "seguir la forma cortada" con esta configuracion.</summary>
+        public bool FollowAtCrossing(AppConfig cfg) => CrossingModeFor(cfg) == 2;
 
         /// <summary>Segmentos a armar de un tramo recto: el muro entero, o sus tramos intactos si para en el cruce.</summary>
         public IList<WallSection> Segments(AppConfig cfg) =>
@@ -61,7 +77,8 @@ namespace RetainingWallRebar
         public bool CanBuild => Error == null && (Straight != null || Corner != null);
 
         /// <summary>CanBuild teniendo en cuenta el modo de cruce elegido (sin tramo intacto no hay nada que armar).</summary>
-        public bool CanBuildWith(AppConfig cfg) => CanBuild && !(StopAtCrossing(cfg) && Stretches.Count == 0);
+        public bool CanBuildWith(AppConfig cfg) =>
+            CanBuild && !(StopAtCrossing(cfg) && Stretches.Count == 0) && !(FollowAtCrossing(cfg) && FollowParts == null);
 
         public string Kind => Error != null ? "SIN ARMAR" : Straight != null ? "Tramo recto" : "Esquinero en L";
 
@@ -70,6 +87,13 @@ namespace RetainingWallRebar
         {
             string d = Error != null ? Error : Straight != null ? Straight.Describe() : Corner.Describe(cfg);
             if (!Joined) return d;
+            if (FollowAtCrossing(cfg))
+            {
+                string fh = "unido" + Uncut.JoinedWith + ": seguir la forma cortada, ";
+                if (FollowParts == null)
+                    return d + " (" + fh + "SIN ARMAR: " + (FollowError ?? "motivo desconocido") + ")";
+                return d + " (" + fh + FollowParts.Describe() + ", " + CrossingWall.LapText(cfg) + ")";
+            }
             if (!StopAtCrossing(cfg)) return d + " (" + Uncut.ThroughNote() + ")";
 
             string head = "unido" + Uncut.JoinedWith + ": parar en el cruce, ";
@@ -133,6 +157,8 @@ namespace RetainingWallRebar
                     {
                         try { a.Stretches = WallSection.IntactStretches(a.Straight, a.CutSolid, cfg, out a.StretchError); }
                         catch (Exception ex) { a.Stretches = new List<WallSection>(); a.StretchError = ex.Message; }
+                        try { a.FollowParts = CrossingWall.Detect(a.Straight, a.CutSolid, cfg, out a.FollowError); }
+                        catch (Exception ex) { a.FollowParts = null; a.FollowError = ex.Message; }
                     }
                     return a;
                 }

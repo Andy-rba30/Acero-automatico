@@ -224,13 +224,31 @@ namespace RetainingWallRebar
         ///              siguen de largo por el cruce, dentro del volumen que Revit le ha dado al otro.
         ///  "stop"    = parar en el cruce: se arma solo el tramo (o tramos) donde la seccion esta
         ///              entera; las barras terminan a CoverEndMm de la cara donde empieza el mordisco.
+        ///  "follow"  = seguir la forma cortada: cada familia va hasta donde llega su parte del
+        ///              hormigon (alzado o zapata) y se prolonga el traslape de esquina
+        ///              (CornerLapDiameters / CornerLapMinMm) dentro del otro elemento.
         /// Se puede cambiar elemento a elemento desde la interfaz.
         /// </summary>
         public string CrossingMode { get; set; } = "through";
 
         [JsonIgnore]
-        public bool CrossingStop =>
-            string.Equals((CrossingMode ?? "").Trim(), "stop", StringComparison.OrdinalIgnoreCase);
+        public bool CrossingStop => CrossingIndex == 1;
+
+        [JsonIgnore]
+        public bool CrossingFollow => CrossingIndex == 2;
+
+        /// <summary>0 pasante, 1 parar en el cruce, 2 seguir la forma cortada (orden de los desplegables).</summary>
+        [JsonIgnore]
+        public int CrossingIndex
+        {
+            get
+            {
+                string m = (CrossingMode ?? "").Trim().ToLowerInvariant();
+                if (m == "stop") return 1;
+                if (m == "follow") return 2;
+                return 0;
+            }
+        }
 
         /// <summary>Overrides por nombre de tipo de familia.</summary>
         public Dictionary<string, SectionOverride> SectionOverrides { get; set; }
