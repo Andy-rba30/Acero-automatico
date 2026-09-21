@@ -18,6 +18,13 @@
 
   "crossingMode": "through",
 
+  "openingReplaceFactor": 1.0,
+  "openingReplaceSpacingMm": 100,
+  "openingAnchorageDiameters": 50,
+  "openingAnchorageMinMm": 600,
+  "openingReplaceVerticals": true,
+  "openingReplaceHorizontals": true,
+
   "partitionTemplate": "MC-{marca}",
 
   "stemVerticalBack":  { "enabled": true, "barTypeName": "", "spacingMm": 200, "legMm": 900, "crownLegMm": 0 },

@@ -53,7 +53,7 @@ uniones y cortes (`WallSection.UncutSolids`):
 - Solo se usa si de verdad falta hormigón (volumen mayor que el visible); si no,
   se sigue leyendo la geometría normal.
 
-Con la geometría completa en la mano, hay dos formas de armar ese muro. Se
+Con la geometría completa en la mano, hay tres formas de armar ese muro. Se
 eligen con `crossingMode` en `config.json` (valor por defecto) y, elemento a
 elemento, con el desplegable **Cruce** que aparece junto a cada muro unido en la
 lista de la ventana:
@@ -89,6 +89,30 @@ lista de la ventana:
   hay (cruce oblicuo), se toma la última estación entera, lo conservador. Una
   cara perpendicular al eje dentro de un tramo entero (escalón más estrecho
   que el paso) rechaza el modo. Tramos de menos de 100 mm se descartan.
+
+- **Seguir la forma cortada** (`"follow"`): el detalle de obra. Cada familia
+  de barras va hasta donde llega **su** parte del hormigón en el sólido
+  cortado: verticales, bastones y horizontales hasta donde llega el alzado;
+  transversales, refuerzos y longitudinales hasta donde llega la zapata. En
+  un extremo libre se aplica `coverEndMm`; en el extremo cortado cada familia
+  se prolonga dentro del otro elemento la longitud de **traslape** de esquina,
+  máx(`cornerLapDiameters` × Ø, `cornerLapMinMm`) con el mayor diámetro de las
+  familias del grupo, sin salir nunca del muro completo. Las comprobaciones
+  se hacen contra el sólido completo, porque el traslape queda dentro del
+  volumen del otro muro. En el ejemplo del hangar: el alzado sigue hasta el
+  final (sus verticales apoyan con su patilla normal dentro de la zapata del
+  otro muro) y la zapata para en la cara de la zapata ajena más el traslape.
+
+  Cómo se detecta (`CrossingWall.Detect`): se muestrea el sólido cortado a lo
+  largo del eje, por separado el alzado (por encima de la cara superior de
+  zapata) y la zapata (por debajo), y se compara el volumen de cada rebanada
+  con el de la geometría completa. Una estación cuenta como entera solo si
+  conserva prácticamente todo el hormigón de esa parte (un corte parcial del
+  ancho cuenta como cortada). Cada parte tiene que quedar en un **único tramo
+  contiguo**: si el otro elemento la parte en dos, o no queda nada de ella,
+  el modo se rechaza con el motivo y el elemento queda en rojo hasta elegir
+  otro. Los límites se afinan con la cara perpendicular del elemento que
+  corta o, si no la hay, con la última estación entera.
 
 Los esquineros en L unidos a un tercer elemento solo admiten el modo pasante.
 
@@ -146,6 +170,66 @@ se elige en la ventana, global o elemento a elemento):
 - Todas las barras, incluidas las patas, se siguen comprobando contra el
   **sólido completo de la L** antes y después de crearlas. Nada puede quedar en el
   hueco interior.
+
+## Vanos en el alzado
+
+Un tramo recto puede tener uno o varios **vanos rectangulares** en el alzado
+(puertas, ventanas, pasos de tubería grandes). El plugin parte las barras que
+cruzan el vano y repone el acero cortado junto a él, como piden E.060 y ACI 318.
+
+### Cómo modelar el vano
+
+- **Preferiblemente como un vacío aparte que corta el muro**: una familia de
+  modelo genérico de vacío (con "Cut with voids when loaded"), colocada sobre
+  el muro y aplicada con Modify → Cut Geometry. Así el plugin lee el muro
+  entero con la geometría original y deduce el vano como el hormigón que falta
+  en el sólido cortado (`StemOpening.Classify`). **También vale un vacío
+  dentro de la familia** del muro: si el sólido no es un prisma, el plugin
+  reconstruye el muro entero extruyendo su sección completa, la de mayor área
+  entre las estaciones muestreadas (`WallSection.RebuildFullPrism`), y
+  clasifica lo que falta igual que en el otro caso.
+- **Rectangular y alineado** con el muro: caras paralelas y perpendiculares al
+  eje, sin inclinar.
+- **Pasante en todo el espesor** del alzado, sobrando por las dos caras.
+- **Dentro del alzado**: no puede entrar en la zapata ni llegar a coronación ni
+  a los extremos del muro. Sí puede **apoyar en la cara superior de la zapata**
+  (una puerta): entonces no hay antepecho.
+- Varios vanos en el mismo muro, sin solaparse a lo largo del eje.
+
+Un hueco dentro del alzado que no cumpla estas reglas (no atraviesa el espesor,
+no es rectangular, toca un extremo) **rechaza el elemento** con el motivo, para
+no poner nunca una barra en el hueco. Un hueco que entra en la zapata o llega a
+coronación no es un vano sino un cruce con otro muro (ver arriba); un muro con
+vanos y además cruzado por otro elemento se rechaza en esta versión. Los
+esquineros en L no admiten vanos.
+
+### Qué hace el plugin
+
+- **Barras interrumpidas.** Las verticales que caen en el ancho del vano se
+  parten en un trozo bajo el vano, que conserva su patilla de zapata (no
+  existe si el vano apoya en la zapata), y otro sobre el vano, que conserva su
+  patilla de coronación; terminan rectas a `coverStemMm` del borde. Las
+  horizontales a la altura del vano paran a `coverEndMm` de cada jamba. Se
+  mantiene la retícula de posiciones del array (n = ⌈L/s⌉ + 1) para que la
+  separación no cambie junto al vano. Bastones igual, sin reposición. Las
+  barras de zapata no cambian.
+- **Reposición** (`openingReplaceFactor`, 1.0 = el mismo acero que se corta):
+  las verticales cortadas de cada cara se reponen a partes iguales a los dos
+  costados, pegadas a la jamba y separadas `openingReplaceSpacingMm` (100),
+  con el mismo tipo de barra y en el mismo plano que las verticales; van
+  desde `openingAnchorageDiameters` × Ø (mínimo `openingAnchorageMinMm`, 50 Ø
+  y 600 mm) por debajo del vano hasta lo mismo por encima, y si eso llega a
+  la zapata o a coronación conservan la patilla correspondiente. Las
+  horizontales cortadas se reponen la mitad encima (dintel) y la mitad debajo
+  (antepecho), o todas encima si el vano apoya en la zapata, apiladas desde
+  el borde y prolongadas el anclaje a cada lado del vano. Si una barra de
+  reposición coincidiera con una de la retícula en el mismo plano, se aparta
+  un diámetro más.
+- Todas las barras se comprueban contra el **sólido cortado**: ninguna puede
+  quedar en el hueco. El diagnóstico de la ventana lista los vanos con sus
+  medidas.
+- Pendiente para una versión siguiente: diagonales de esquina y el dibujo de
+  los vanos en el esquema.
 
 ## Horizontales del alzado por tramos de altura
 
@@ -429,9 +513,15 @@ Requisitos previos en el modelo:
 - `cornerThroughWing`: `"auto"` (ala de tramo recto más largo), `"1"` o `"2"`.
 - `cornerLapDiameters` (40) y `cornerLapMinMm` (300): pata de solape de los
   horizontales en la esquina.
-- `crossingMode`: `"through"` (pasante, por defecto) o `"stop"` (parar en el
-  cruce) para los muros unidos o cortados por otro elemento. Ver [Muros que se
+- `crossingMode`: `"through"` (pasante, por defecto), `"stop"` (parar en el
+  cruce) o `"follow"` (seguir la forma cortada, con el traslape de
+  `cornerLapDiameters` / `cornerLapMinMm`) para los muros unidos o cortados
+  por otro elemento. Ver [Muros que se
   cruzan](#muros-que-se-cruzan-o-están-unidos-a-otros-elementos).
+- `openingReplaceFactor`, `openingReplaceSpacingMm`, `openingAnchorageDiameters`,
+  `openingAnchorageMinMm`, `openingReplaceVerticals`, `openingReplaceHorizontals`:
+  reposición del acero cortado por los vanos del alzado. Ver [Vanos en el
+  alzado](#vanos-en-el-alzado).
 - `cornerFootingMesh`: `"through"` (malla del ala pasante en el bloque; la otra
   ala para en la cara del bloque, sin solape) o `"both"` (transversales de las
   dos alas cruzadas y longitudinales de cada ala solapadas dentro del bloque con

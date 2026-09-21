@@ -76,6 +76,8 @@ namespace RetainingWallRebar
         private TextBox _band, _lapDia, _lapMin, _partition;
         private ComboBox _through, _mesh, _crossing;
         private Button _buildButton;
+        private TextBox _openFactor, _openSpacing, _openLdDia, _openLdMin;
+        private CheckBox _openVert, _openHor;
         private TextBlock _partitionPreview;
 
         /// <summary>Texto del diagnostico y etiqueta de tipo de cada fila, para actualizarlos al cambiar el modo de cruce.</summary>
@@ -220,10 +222,13 @@ namespace RetainingWallRebar
                     combo.Items.Add("Segun configuracion");
                     combo.Items.Add("Pasante (geometria completa)");
                     combo.Items.Add("Parar en el cruce (tramo entero)");
+                    combo.Items.Add("Seguir la forma cortada (con traslape)");
                     combo.SelectedIndex = item.CrossingChoice + 1;
                     combo.ToolTip = "Este muro esta unido a otro elemento que le quita hormigon. Pasante: las barras siguen de largo por el " +
                                     "cruce. Parar en el cruce: se arma solo el tramo donde la seccion esta entera y las barras terminan " +
-                                    "a un recubrimiento de extremo de la cara del otro elemento.";
+                                    "a un recubrimiento de extremo de la cara del otro elemento. Seguir la forma cortada: las barras del " +
+                                    "alzado van hasta donde llega el alzado y las de zapata hasta donde llega la zapata, y en el corte " +
+                                    "cada familia se prolonga el traslape de esquina dentro del otro elemento.";
                     HostAnalysis joined = item;
                     combo.SelectionChanged += (s, e) => { joined.CrossingChoice = combo.SelectedIndex - 1; Refresh(); };
                     side.Children.Add(combo);
@@ -1146,15 +1151,43 @@ namespace RetainingWallRebar
             _crossing = new ComboBox { Margin = Pad, HorizontalAlignment = HorizontalAlignment.Stretch };
             _crossing.Items.Add("Pasante: geometria completa, las barras siguen de largo por el cruce");
             _crossing.Items.Add("Parar en el cruce: solo el tramo con la seccion entera");
-            _crossing.SelectedIndex = _cfg.CrossingStop ? 1 : 0;
+            _crossing.Items.Add("Seguir la forma cortada: cada familia hasta su hormigon, mas el traslape de esquina");
+            _crossing.SelectedIndex = _cfg.CrossingIndex;
             _crossing.ToolTip = "Cuando dos muros se cruzan y estan unidos, Revit le quita a uno de ellos el hormigon comun. " +
                                 "Pasante: ese muro se lee con la geometria completa de su familia y se arma entero, con las barras " +
                                 "dentro del volumen que Revit le ha dado al otro. Parar en el cruce: se arma solo el tramo (o tramos) " +
                                 "donde la seccion esta entera; las barras terminan a un recubrimiento de extremo de la cara del otro " +
                                 "elemento y el resto del hormigon (por ejemplo el alzado sobre la zapata del otro muro) queda sin " +
-                                "armar por este muro. Se puede cambiar elemento a elemento en la lista de arriba.";
+                                "armar por este muro. Seguir la forma cortada: verticales, bastones y horizontales van hasta donde " +
+                                "llega el alzado; transversales, refuerzos y longitudinales hasta donde llega la zapata; en el extremo " +
+                                "cortado cada familia se prolonga el traslape de esquina (diametros y minimo de arriba) dentro del " +
+                                "otro elemento. Se puede cambiar elemento a elemento en la lista de arriba.";
             _crossing.SelectionChanged += (s, e) => Refresh();
             AddControl(grid, "Muro unido o cortado por otro", _crossing);
+
+            AddHeading(grid, "Vanos en el alzado");
+
+            _openFactor = AddLabeled(grid, "Factor de reposicion del acero cortado (1 = el mismo acero)", _cfg.OpeningReplaceFactor);
+            _openFactor.ToolTip = "Las verticales que corta el vano se reponen a los dos costados y las horizontales encima (dintel) " +
+                                  "y debajo (antepecho), con el mismo diametro, como pide E.060 / ACI 318. Con un vano que apoya en la " +
+                                  "zapata, todas las horizontales repuestas van encima.";
+            _openSpacing = AddLabeled(grid, "Separacion de las barras de reposicion (mm)", _cfg.OpeningReplaceSpacingMm);
+
+            var ld = new StackPanel { Orientation = Orientation.Horizontal };
+            _openLdDia = NumBox(_cfg.OpeningAnchorageDiameters);
+            _openLdMin = NumBox(_cfg.OpeningAnchorageMinMm);
+            ld.Children.Add(_openLdDia);
+            ld.Children.Add(new TextBlock { Text = "x diametro, minimo", Margin = Pad, VerticalAlignment = VerticalAlignment.Center });
+            ld.Children.Add(_openLdMin);
+            ld.Children.Add(new TextBlock { Text = "mm", Margin = Pad, VerticalAlignment = VerticalAlignment.Center });
+            AddControl(grid, "Anclaje de la reposicion mas alla del vano", ld);
+
+            var openChecks = new StackPanel { Orientation = Orientation.Horizontal };
+            _openVert = new CheckBox { Content = "Reponer verticales (costados)", Margin = Pad, IsChecked = _cfg.OpeningReplaceVerticals, VerticalAlignment = VerticalAlignment.Center };
+            _openHor = new CheckBox { Content = "Reponer horizontales (dintel y antepecho)", Margin = Pad, IsChecked = _cfg.OpeningReplaceHorizontals, VerticalAlignment = VerticalAlignment.Center };
+            openChecks.Children.Add(_openVert);
+            openChecks.Children.Add(_openHor);
+            AddControl(grid, "Reposicion", openChecks);
 
             var note = new TextBlock
             {
@@ -1294,7 +1327,16 @@ namespace RetainingWallRebar
             else target.PartitionTemplate = tpl;
             target.CornerThroughWing = _through.SelectedIndex == 1 ? "1" : _through.SelectedIndex == 2 ? "2" : "auto";
             target.CornerFootingMesh = _mesh.SelectedIndex == 1 ? "both" : "through";
-            target.CrossingMode = _crossing != null && _crossing.SelectedIndex == 1 ? "stop" : "through";
+            target.CrossingMode = _crossing == null ? "through" : _crossing.SelectedIndex == 1 ? "stop" : _crossing.SelectedIndex == 2 ? "follow" : "through";
+            if (_openFactor != null)
+            {
+                if (TryNum(_openFactor, "Vanos: factor de reposicion", 0, errors, out v)) target.OpeningReplaceFactor = v;
+                if (TryNum(_openSpacing, "Vanos: separacion de reposicion", 1, errors, out v)) target.OpeningReplaceSpacingMm = v;
+                if (TryNum(_openLdDia, "Vanos: anclaje (diametros)", 0, errors, out v)) target.OpeningAnchorageDiameters = v;
+                if (TryNum(_openLdMin, "Vanos: anclaje (minimo mm)", 0, errors, out v)) target.OpeningAnchorageMinMm = v;
+                target.OpeningReplaceVerticals = _openVert.IsChecked == true;
+                target.OpeningReplaceHorizontals = _openHor.IsChecked == true;
+            }
 
             foreach (FamilyRow row in _rows)
             {

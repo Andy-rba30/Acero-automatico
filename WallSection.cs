@@ -53,6 +53,9 @@ namespace RetainingWallRebar
         /// <summary>Etiqueta para mensajes y nombres de conjuntos ("" en un tramo recto, "ala 1" / "ala 2").</summary>
         public string Label = "";
 
+        /// <summary>Vanos del alzado (solo tramos rectos), ordenados a lo largo del eje. Vacio si no hay.</summary>
+        public List<StemOpening> Openings = new List<StemOpening>();
+
         /// <summary>Motivo del ultimo fallo de Probe, para poder diagnosticar desde el dialogo.</summary>
         public static string LastError;
 
@@ -163,7 +166,11 @@ namespace RetainingWallRebar
             return solid;
         }
 
-        internal static WallSection ProbeSolid(Document doc, Element host, Solid solid, AppConfig cfg)
+        /// <summary>
+        /// Sistema local y caja del solido (ejes, origen y Len*), sin comprobar nada mas.
+        /// null (con LastError) si el solido no tiene aristas legibles.
+        /// </summary>
+        internal static WallSection Frame(Document doc, Element host, Solid solid, AppConfig cfg)
         {
             List<XYZ> pts = Vertices(solid);
             if (pts.Count < 4)
@@ -192,6 +199,68 @@ namespace RetainingWallRebar
                 HostSolid = solid
             };
             s.StemReach = s.LenW;
+            return s;
+        }
+
+        /// <summary>
+        /// Muro entero reconstruido a partir de un solido con huecos en el alzado (vanos
+        /// dentro de la familia, o un corte que la geometria original no separa): se toma
+        /// la seccion completa (la de mayor area entre las estaciones muestreadas) y se
+        /// extruye a lo largo de todo el recorrido. Devuelve null, con el motivo, si no hay
+        /// una seccion claramente completa o la extrusion falla. Quien llama decide despues
+        /// si lo que falta respecto al solido real son vanos validos (StemOpening.Classify).
+        /// </summary>
+        internal static Solid RebuildFullPrism(Document doc, Element host, Solid cut, AppConfig cfg, out string why)
+        {
+            why = null;
+            WallSection f = Frame(doc, host, cut, cfg);
+            if (f == null) { why = LastError; return null; }
+
+            double step = Step(cfg), half = HalfSlice(cfg);
+            int n = (int)Math.Ceiling(f.LenW / step);
+            n = Math.Max(5, Math.Min(n, 500));
+
+            // estacion con la seccion mas grande: la completa (el hueco solo puede quitar area)
+            Solid best = null;
+            double bestArea = 0;
+            for (int i = 0; i < n; i++)
+            {
+                double w = f.LenW * (i + 0.5) / n;
+                Solid slab = Intersect(f, -1, f.LenU + 1, -1, f.LenV + 1, w - half, w + half);
+                if (slab == null) continue;
+                double area = slab.Volume / (2 * half);
+                if (area > bestArea + Mm(1) * Mm(1)) { bestArea = area; best = slab; }
+            }
+            if (best == null) { why = "no se pudo leer ninguna seccion"; return null; }
+
+            // tapa de la rebanada perpendicular al eje -> contorno de la seccion completa
+            PlanarFace cap = null;
+            foreach (Face face in best.Faces)
+                if (face is PlanarFace pf && Math.Abs(pf.FaceNormal.DotProduct(f.DirW)) > 0.999) { cap = pf; break; }
+            if (cap == null) { why = "la seccion completa no tiene una tapa plana legible"; return null; }
+
+            try
+            {
+                double w0 = f.Origin.DotProduct(f.DirW);
+                double wCap = cap.Origin.DotProduct(f.DirW);
+                Transform toStart = Transform.CreateTranslation(f.DirW * (w0 - wCap));
+                var loops = cap.GetEdgesAsCurveLoops().Select(l => CurveLoop.CreateViaTransform(l, toStart)).ToList();
+                Solid whole = GeometryCreationUtilities.CreateExtrusionGeometry(loops, f.DirW, f.LenW);
+                if (whole == null || whole.Volume <= cut.Volume) { why = "la extrusion de la seccion completa no es mayor que el solido"; return null; }
+                return whole;
+            }
+            catch (Exception ex)
+            {
+                why = "no se pudo extruir la seccion completa (" + ex.Message + ")";
+                return null;
+            }
+        }
+
+        internal static WallSection ProbeSolid(Document doc, Element host, Solid solid, AppConfig cfg)
+        {
+            WallSection s = Frame(doc, host, solid, cfg);
+            if (s == null) return null;
+            var ov = cfg.OverrideFor(TypeNameOf(doc, host));
 
             // --- SEGURIDAD PRIMERO: el solido tiene que ser un prisma recto ---
             // Se comprueba antes de leer canto, caras o nada mas. Si la seccion no es
@@ -684,7 +753,7 @@ namespace RetainingWallRebar
             cutSolid = cut.FirstOrDefault();
             if (cut.Count == 0) return cut;
 
-            List<ElementId> others = JoinedOrCutting(e);
+            List<ElementId> others = JoinedOrCutting(e, out bool voidCut);
             List<Solid> whole = null;
             try
             {
@@ -705,7 +774,8 @@ namespace RetainingWallRebar
             {
                 JoinedWith = others.Count == 0 ? "" : " con " + string.Join(", ", others.Select(id => Describe(e.Document, id))),
                 VolumeCut = vCut,
-                VolumeWhole = vWhole
+                VolumeWhole = vWhole,
+                VoidCut = voidCut
             };
             return whole;
         }
@@ -717,6 +787,9 @@ namespace RetainingWallRebar
             public string JoinedWith = "";
             /// <summary>Volumen visible (cortado) y volumen completo, en pies cubicos.</summary>
             public double VolumeCut, VolumeWhole;
+
+            /// <summary>True si algun elemento lo corta con un vacio (Cut Geometry), como un vano.</summary>
+            public bool VoidCut;
 
             private static double M3(double ft3) => ft3 * Math.Pow(MmPerFt / 1000.0, 3);
 
@@ -803,7 +876,7 @@ namespace RetainingWallRebar
         }
 
         /// <summary>Posicion (w relativo a w0) de la cara plana perpendicular al eje mas cercana a guess, si hay una a menos de maxDist.</summary>
-        private static double? FaceNear(Solid solid, XYZ axis, double w0, double guess, double maxDist)
+        internal static double? FaceNear(Solid solid, XYZ axis, double w0, double guess, double maxDist)
         {
             double? best = null;
             double bestD = maxDist;
@@ -833,12 +906,19 @@ namespace RetainingWallRebar
             return c;
         }
 
-        /// <summary>Elementos unidos (Unir geometria) o que cortan al elemento.</summary>
-        private static List<ElementId> JoinedOrCutting(Element e)
+        /// <summary>Elementos unidos (Unir geometria) o que cortan al elemento; voidCut = alguno lo corta con un vacio (Cut Geometry).</summary>
+        private static List<ElementId> JoinedOrCutting(Element e, out bool voidCut)
         {
+            voidCut = false;
             var ids = new List<ElementId>();
             try { ids.AddRange(JoinGeometryUtils.GetJoinedElements(e.Document, e)); } catch { }
-            try { ids.AddRange(SolidSolidCutUtils.GetCuttingSolids(e)); } catch { }
+            try
+            {
+                ICollection<ElementId> cutters = SolidSolidCutUtils.GetCuttingSolids(e);
+                voidCut = cutters.Count > 0;
+                ids.AddRange(cutters);
+            }
+            catch { }
             return ids.Distinct().ToList();
         }
 

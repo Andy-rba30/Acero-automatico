@@ -224,13 +224,55 @@ namespace RetainingWallRebar
         ///              siguen de largo por el cruce, dentro del volumen que Revit le ha dado al otro.
         ///  "stop"    = parar en el cruce: se arma solo el tramo (o tramos) donde la seccion esta
         ///              entera; las barras terminan a CoverEndMm de la cara donde empieza el mordisco.
+        ///  "follow"  = seguir la forma cortada: cada familia va hasta donde llega su parte del
+        ///              hormigon (alzado o zapata) y se prolonga el traslape de esquina
+        ///              (CornerLapDiameters / CornerLapMinMm) dentro del otro elemento.
         /// Se puede cambiar elemento a elemento desde la interfaz.
         /// </summary>
         public string CrossingMode { get; set; } = "through";
 
         [JsonIgnore]
-        public bool CrossingStop =>
-            string.Equals((CrossingMode ?? "").Trim(), "stop", StringComparison.OrdinalIgnoreCase);
+        public bool CrossingStop => CrossingIndex == 1;
+
+        [JsonIgnore]
+        public bool CrossingFollow => CrossingIndex == 2;
+
+        /// <summary>0 pasante, 1 parar en el cruce, 2 seguir la forma cortada (orden de los desplegables).</summary>
+        [JsonIgnore]
+        public int CrossingIndex
+        {
+            get
+            {
+                string m = (CrossingMode ?? "").Trim().ToLowerInvariant();
+                if (m == "stop") return 1;
+                if (m == "follow") return 2;
+                return 0;
+            }
+        }
+
+        // --- vanos en el alzado ---
+
+        /// <summary>
+        /// Factor de reposicion del acero interrumpido por un vano (E.060 / ACI 318): las
+        /// verticales cortadas se reponen a los dos costados y las horizontales cortadas
+        /// arriba y abajo, con el mismo diametro. 1.0 = el mismo acero que se corta.
+        /// </summary>
+        public double OpeningReplaceFactor { get; set; } = 1.0;
+
+        /// <summary>Separacion entre las barras de reposicion, pegadas al borde del vano (mm).</summary>
+        public double OpeningReplaceSpacingMm { get; set; } = 100;
+
+        /// <summary>Longitud de anclaje de las barras de reposicion mas alla del borde del vano: diametros y minimo en mm.</summary>
+        public double OpeningAnchorageDiameters { get; set; } = 50;
+        public double OpeningAnchorageMinMm { get; set; } = 600;
+
+        /// <summary>Reponer las verticales cortadas (costados) y las horizontales cortadas (dintel y antepecho).</summary>
+        public bool OpeningReplaceVerticals { get; set; } = true;
+        public bool OpeningReplaceHorizontals { get; set; } = true;
+
+        /// <summary>Anclaje (pies) para una barra de diametro db (pies).</summary>
+        public double OpeningAnchorage(double db) =>
+            Math.Max(WallSection.Mm(OpeningAnchorageMinMm), OpeningAnchorageDiameters * db);
 
         /// <summary>Overrides por nombre de tipo de familia.</summary>
         public Dictionary<string, SectionOverride> SectionOverrides { get; set; }
