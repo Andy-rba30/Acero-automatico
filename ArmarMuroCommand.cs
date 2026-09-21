@@ -67,10 +67,10 @@ namespace RetainingWallRebar
                 foreach (HostAnalysis item in items)
                 {
                     string tag = item.Tag;
-                    if (!item.CanBuild)
+                    if (!item.CanBuildWith(cfg))
                     {
                         rejected++;
-                        log.Add(tag + "SIN ARMAR -> " + item.Error);
+                        log.Add(tag + "SIN ARMAR -> " + (item.Error ?? item.Detail(cfg)));
                         continue;
                     }
 
@@ -82,7 +82,7 @@ namespace RetainingWallRebar
                         sub.Start();
                         BuildResult res = null;
                         string error = null;
-                        WallSection verifyWith = item.Straight ?? item.Corner.Wings[0];
+                        WallSection verifyWith = item.Straight != null ? item.Segments(cfg)[0] : item.Corner.Wings[0];
                         try
                         {
                             res = item.Straight != null
