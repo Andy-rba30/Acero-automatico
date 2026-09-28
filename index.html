@@ -1,0 +1,368 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Calculadora</title>
+<style>
+  :root {
+    --bg: #f4f4f7;
+    --surface: #ffffff;
+    --display-bg: #1c1c22;
+    --display-fg: #ffffff;
+    --display-fg-dim: #9a9aa5;
+    --key-bg: #ffffff;
+    --key-fg: #1c1c22;
+    --key-bg-hover: #ececf2;
+    --key-op-bg: #ff9f2e;
+    --key-op-fg: #ffffff;
+    --key-op-bg-hover: #ffb257;
+    --key-fn-bg: #e2e2ea;
+    --key-fn-fg: #1c1c22;
+    --key-fn-bg-hover: #d3d3de;
+    --border: #e2e2ea;
+    --shadow: 0 1px 2px rgba(20,20,30,0.06);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0f0f13;
+      --surface: #17171d;
+      --display-bg: #0c0c10;
+      --display-fg: #ffffff;
+      --display-fg-dim: #7a7a86;
+      --key-bg: #232329;
+      --key-fg: #f2f2f5;
+      --key-bg-hover: #2e2e36;
+      --key-op-bg: #ff9f2e;
+      --key-op-fg: #17171d;
+      --key-op-bg-hover: #ffb257;
+      --key-fn-bg: #35353e;
+      --key-fn-fg: #f2f2f5;
+      --key-fn-bg-hover: #40404b;
+      --border: #2a2a32;
+      --shadow: 0 1px 2px rgba(0,0,0,0.4);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0f0f13;
+    --surface: #17171d;
+    --display-bg: #0c0c10;
+    --display-fg: #ffffff;
+    --display-fg-dim: #7a7a86;
+    --key-bg: #232329;
+    --key-fg: #f2f2f5;
+    --key-bg-hover: #2e2e36;
+    --key-op-bg: #ff9f2e;
+    --key-op-fg: #17171d;
+    --key-op-bg-hover: #ffb257;
+    --key-fn-bg: #35353e;
+    --key-fn-fg: #f2f2f5;
+    --key-fn-bg-hover: #40404b;
+    --border: #2a2a32;
+    --shadow: 0 1px 2px rgba(0,0,0,0.4);
+  }
+
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+  }
+
+  .calc {
+    width: 100%;
+    max-width: 360px;
+    background: var(--surface);
+    border-radius: 20px;
+    box-shadow: var(--shadow);
+    border: 1px solid var(--border);
+    overflow: hidden;
+  }
+
+  .display {
+    background: var(--display-bg);
+    color: var(--display-fg);
+    padding: 24px 20px 16px;
+    text-align: right;
+    min-height: 108px;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    gap: 6px;
+  }
+
+  .expr {
+    color: var(--display-fg-dim);
+    font-size: 15px;
+    min-height: 18px;
+    word-break: break-all;
+    overflow-wrap: anywhere;
+  }
+
+  .result {
+    font-size: 40px;
+    font-weight: 600;
+    line-height: 1.1;
+    word-break: break-all;
+    overflow-wrap: anywhere;
+  }
+
+  .keys {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1px;
+    background: var(--border);
+    padding: 1px;
+  }
+
+  button {
+    appearance: none;
+    border: none;
+    background: var(--key-bg);
+    color: var(--key-fg);
+    font-size: 18px;
+    padding: 18px 0;
+    cursor: pointer;
+    font-family: inherit;
+    transition: background 0.12s ease;
+    -webkit-tap-highlight-color: transparent;
+  }
+  button:hover { background: var(--key-bg-hover); }
+  button:active { filter: brightness(0.92); }
+
+  button.op {
+    background: var(--key-op-bg);
+    color: var(--key-op-fg);
+    font-weight: 600;
+  }
+  button.op:hover { background: var(--key-op-bg-hover); }
+
+  button.fn {
+    background: var(--key-fn-bg);
+    color: var(--key-fn-fg);
+    font-size: 15px;
+  }
+  button.fn:hover { background: var(--key-fn-bg-hover); }
+
+  button.zero { grid-column: span 2; }
+
+  button:focus-visible {
+    outline: 2px solid var(--key-op-bg);
+    outline-offset: -2px;
+    position: relative;
+    z-index: 1;
+  }
+</style>
+</head>
+<body>
+  <div class="calc">
+    <div class="display" id="display">
+      <div class="expr" id="expr"></div>
+      <div class="result" id="result">0</div>
+    </div>
+    <div class="keys" id="keys">
+      <button class="fn" data-action="clear">AC</button>
+      <button class="fn" data-action="backspace">⌫</button>
+      <button class="fn" data-value="%">%</button>
+      <button class="op" data-value="÷">÷</button>
+
+      <button data-value="7">7</button>
+      <button data-value="8">8</button>
+      <button data-value="9">9</button>
+      <button class="op" data-value="×">×</button>
+
+      <button data-value="4">4</button>
+      <button data-value="5">5</button>
+      <button data-value="6">6</button>
+      <button class="op" data-value="−">−</button>
+
+      <button data-value="1">1</button>
+      <button data-value="2">2</button>
+      <button data-value="3">3</button>
+      <button class="op" data-value="+">+</button>
+
+      <button class="fn" data-value="(">(</button>
+      <button class="zero" data-value="0">0</button>
+      <button data-value=".">.</button>
+      <button class="op" data-action="equals">=</button>
+
+      <button class="fn" data-value=")" style="grid-column: 1 / -1;">)</button>
+    </div>
+  </div>
+
+<script>
+(function () {
+  "use strict";
+
+  var exprEl = document.getElementById("expr");
+  var resultEl = document.getElementById("result");
+  var keysEl = document.getElementById("keys");
+
+  var expression = "";
+  var justEvaluated = false;
+
+  var OP_MAP = { "×": "*", "÷": "/", "−": "-", "+": "+" };
+
+  function toEvalString(str) {
+    var s = str;
+    for (var k in OP_MAP) s = s.split(k).join(OP_MAP[k]);
+    s = s.replace(/(\d+(?:\.\d+)?)%/g, "($1/100)");
+    return s;
+  }
+
+  function isOperatorChar(ch) {
+    return ch === "+" || ch === "−" || ch === "×" || ch === "÷";
+  }
+
+  function lastChar() {
+    return expression.length ? expression[expression.length - 1] : "";
+  }
+
+  function appendDigit(d) {
+    if (justEvaluated) {
+      expression = "";
+      justEvaluated = false;
+    }
+    if (d === "." ) {
+      var seg = expression.split(/[+−×÷()]/).pop();
+      if (seg.indexOf(".") !== -1) return;
+      if (seg === "") expression += "0";
+    }
+    expression += d;
+    render();
+  }
+
+  function appendOperator(op) {
+    if (justEvaluated) justEvaluated = false;
+    if (expression === "" && op !== "−") return;
+    var last = lastChar();
+    if (isOperatorChar(last)) {
+      expression = expression.slice(0, -1) + op;
+    } else {
+      expression += op;
+    }
+    render();
+  }
+
+  function appendParen(p) {
+    if (justEvaluated) { expression = ""; justEvaluated = false; }
+    if (p === "(") {
+      var last = lastChar();
+      if (last && (/[0-9)%]/.test(last))) expression += "×";
+      expression += "(";
+    } else {
+      var open = (expression.match(/\(/g) || []).length;
+      var close = (expression.match(/\)/g) || []).length;
+      if (open > close && lastChar() !== "(" && !isOperatorChar(lastChar())) {
+        expression += ")";
+      }
+    }
+    render();
+  }
+
+  function appendPercent() {
+    if (justEvaluated) justEvaluated = false;
+    var last = lastChar();
+    if (last && /[0-9)]/.test(last)) {
+      expression += "%";
+      render();
+    }
+  }
+
+  function clearAll() {
+    expression = "";
+    justEvaluated = false;
+    render();
+  }
+
+  function backspace() {
+    if (justEvaluated) { clearAll(); return; }
+    expression = expression.slice(0, -1);
+    render();
+  }
+
+  function evaluate() {
+    if (!expression) return;
+    var clean = expression;
+    var open = (clean.match(/\(/g) || []).length;
+    var close = (clean.match(/\)/g) || []).length;
+    for (var i = 0; i < open - close; i++) clean += ")";
+    if (isOperatorChar(clean[clean.length - 1])) {
+      clean = clean.slice(0, -1);
+    }
+    try {
+      var evalStr = toEvalString(clean);
+      if (!/^[0-9+\-*/().%\s]+$/.test(evalStr)) throw new Error("invalid");
+      var value = Function('"use strict"; return (' + evalStr + ")")();
+      if (typeof value !== "number" || !isFinite(value)) throw new Error("invalid");
+      value = Math.round(value * 1e10) / 1e10;
+      exprEl.textContent = displayExpr(expression) + " =";
+      resultEl.textContent = formatNumber(value);
+      expression = String(value);
+      justEvaluated = true;
+    } catch (e) {
+      resultEl.textContent = "Erro";
+      justEvaluated = true;
+      expression = "";
+    }
+  }
+
+  function formatNumber(n) {
+    var s = String(n);
+    if (s.length > 14) {
+      s = n.toPrecision(10).replace(/\.?0+$/, "").replace(/\.?0+e/, "e");
+    }
+    return s;
+  }
+
+  function displayExpr(str) {
+    return str || "";
+  }
+
+  function render() {
+    if (!justEvaluated) {
+      exprEl.textContent = "";
+      resultEl.textContent = displayExpr(expression) || "0";
+    }
+  }
+
+  keysEl.addEventListener("click", function (e) {
+    var btn = e.target.closest("button");
+    if (!btn) return;
+    var action = btn.dataset.action;
+    var value = btn.dataset.value;
+
+    if (action === "clear") return clearAll();
+    if (action === "backspace") return backspace();
+    if (action === "equals") return evaluate();
+
+    if (value === "%") return appendPercent();
+    if (value === "(" || value === ")") return appendParen(value);
+    if (isOperatorChar(value)) return appendOperator(value);
+    return appendDigit(value);
+  });
+
+  document.addEventListener("keydown", function (e) {
+    var key = e.key;
+    if (/^[0-9.]$/.test(key)) { appendDigit(key); return; }
+    if (key === "+") { appendOperator("+"); return; }
+    if (key === "-") { appendOperator("−"); return; }
+    if (key === "*") { appendOperator("×"); return; }
+    if (key === "/") { e.preventDefault(); appendOperator("÷"); return; }
+    if (key === "%") { appendPercent(); return; }
+    if (key === "(" || key === ")") { appendParen(key); return; }
+    if (key === "Enter" || key === "=") { e.preventDefault(); evaluate(); return; }
+    if (key === "Backspace") { backspace(); return; }
+    if (key === "Escape") { clearAll(); return; }
+  });
+
+  render();
+})();
+</script>
+</body>
+</html>
