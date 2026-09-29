@@ -19,12 +19,6 @@
     <PackageReference Include="Nice3point.Revit.Api.RevitAPIUI" Version="2027.*" ExcludeAssets="runtime" />
   </ItemGroup>
 
-  <!-- El add-in de columnas (carpeta ColumnRebar) es un proyecto aparte: no entra en esta DLL -->
-  <ItemGroup>
-    <Compile Remove="ColumnRebar\**" />
-    <None Remove="ColumnRebar\**" />
-  </ItemGroup>
-
   <ItemGroup>
     <None Update="config.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
