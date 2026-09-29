@@ -1,0 +1,36 @@
+{
+  "coverMm": 40,
+
+  "longitudinal": {
+    "barTypeName": "",
+    "maxSpacingMm": 150,
+    "bottomExtensionMm": 0,
+    "topExtensionMm": 0,
+    "bottomLegMm": 0
+  },
+
+  "stirrups": {
+    "barTypeName": "",
+    "hookTypeName": "135",
+    "hookOrientation": "left",
+    "distribution": "1@50, 5@100, R@250",
+    "symmetric": true,
+    "bottomOffsetMm": 0,
+    "topOffsetMm": 0
+  },
+
+  "crossties": {
+    "enabled": false,
+    "barTypeName": "",
+    "hookTypeName": "135",
+    "hookOrientation": "left",
+    "directions": "both"
+  },
+
+  "partitionTemplate": "COL-{marca}",
+
+  "probeSliceMm": 10,
+  "prismCheckStepMm": 300,
+  "prismCheckToleranceMm": 2,
+  "rectilinearAngleDeg": 0.5
+}

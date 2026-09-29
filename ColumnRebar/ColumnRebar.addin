@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RevitAddIns>
+  <AddIn Type="Application">
+    <Name>ARBA Columnas</Name>
+    <Assembly>ColumnRebar\ColumnRebar.dll</Assembly>
+    <FullClassName>ColumnRebar.RibbonApp</FullClassName>
+    <ClientId>5b8d2f41-9c3e-4a76-8e12-0d4f6a7b9c35</ClientId>
+    <VendorId>LOCAL</VendorId>
+    <VendorDescription>Uso interno</VendorDescription>
+  </AddIn>
+  <AddIn Type="Command">
+    <Name>Armar columna</Name>
+    <Text>Armar columna</Text>
+    <Description>Genera el armado de columnas de seccion rectangular, L, T, U o cruz (longitudinales, estribos y grapas) a partir de la geometria del elemento, con una ventana para elegir el armado y los aceros.</Description>
+    <Assembly>ColumnRebar\ColumnRebar.dll</Assembly>
+    <FullClassName>ColumnRebar.ArmarColumnaCommand</FullClassName>
+    <ClientId>a7c41e08-3f6b-4d29-b5e7-2c9d8f0a1b64</ClientId>
+    <VendorId>LOCAL</VendorId>
+    <VendorDescription>Uso interno</VendorDescription>
+    <VisibilityMode>NotVisibleInFamily</VisibilityMode>
+  </AddIn>
+</RevitAddIns>
