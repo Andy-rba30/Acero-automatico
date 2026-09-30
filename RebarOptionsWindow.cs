@@ -105,7 +105,7 @@ namespace RetainingWallRebar
         private bool _strictTypes;
 
         private static readonly Thickness Pad = new Thickness(4, 2, 4, 2);
-        private static readonly Brush SelectedBrush = new SolidColorBrush(Color.FromRgb(0xDC, 0xE8, 0xF6));
+        private static readonly Brush SelectedBrush = RevitTheme.Selection;
 
         public RebarOptionsWindow(AppConfig cfg, IList<string> barTypes, IDictionary<string, double> diametersMm, IList<HostAnalysis> items)
         {
@@ -132,6 +132,7 @@ namespace RetainingWallRebar
             ShowInTaskbar = false;
             FontSize = 12;
 
+            RevitTheme.Apply(this);
             Content = BuildRoot();
             _selected = _items.FirstOrDefault(i => i.CanBuild);
             if (_selected != null) SelectItem(_selected);
@@ -205,7 +206,7 @@ namespace RetainingWallRebar
                 var kindRun = new System.Windows.Documents.Run(item.Kind + ": ")
                 {
                     FontWeight = FontWeights.SemiBold,
-                    Foreground = item.CanBuildWith(_cfg) ? Brushes.DarkGreen : Brushes.Firebrick
+                    Foreground = item.CanBuildWith(_cfg) ? RevitTheme.Ok : RevitTheme.Error
                 };
                 var detailRun = new System.Windows.Documents.Run(item.Detail(_cfg));
                 text.Inlines.Add(kindRun);
@@ -277,7 +278,7 @@ namespace RetainingWallRebar
         {
             foreach (var kv in _itemRuns)
             {
-                kv.Value.kind.Foreground = kv.Key.CanBuildWith(scratch) ? Brushes.DarkGreen : Brushes.Firebrick;
+                kv.Value.kind.Foreground = kv.Key.CanBuildWith(scratch) ? RevitTheme.Ok : RevitTheme.Error;
                 kv.Value.detail.Text = kv.Key.Detail(scratch);
             }
             if (_buildButton != null)
@@ -351,7 +352,7 @@ namespace RetainingWallRebar
             left.Children.Add(_zoneGrid);
             RebuildZoneTable();
 
-            _zoneMessage = new TextBlock { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(4, 4, 4, 0), Foreground = Brushes.Firebrick };
+            _zoneMessage = new TextBlock { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(4, 4, 4, 0), Foreground = RevitTheme.Error };
             left.Children.Add(_zoneMessage);
             left.Children.Add(new TextBlock
             {
@@ -363,7 +364,7 @@ namespace RetainingWallRebar
                        "la cara superior de la zapata y se aplican a todos los muros seleccionados; un tramo que quede por encima " +
                        "de la coronacion de un muro se omite en ese muro.",
                 TextWrapping = TextWrapping.Wrap,
-                Foreground = Brushes.DimGray,
+                Foreground = RevitTheme.Muted,
                 Margin = new Thickness(4, 6, 4, 0)
             });
             Grid.SetColumn(left, 0);
@@ -378,7 +379,7 @@ namespace RetainingWallRebar
             Grid.SetRow(_previewCaption, 0);
             right.Children.Add(_previewCaption);
             _preview = new StemPreview { MinHeight = 430 };
-            var frame = new Border { Child = _preview, BorderBrush = Brushes.Gray, BorderThickness = new Thickness(1), Background = Brushes.White };
+            var frame = new Border { Child = _preview, BorderBrush = RevitTheme.Border, BorderThickness = new Thickness(1), Background = RevitTheme.Paper };
             Grid.SetRow(frame, 1);
             right.Children.Add(frame);
 
@@ -441,7 +442,7 @@ namespace RetainingWallRebar
 
                 row.Top = NumBox(z.TopMm > 0 ? z.TopMm / 1000.0 : 0);
                 row.Top.ToolTip = "Cota superior del tramo sobre la cara superior de la zapata";
-                if (i == _zoneCount - 1) { row.Top.Text = "coronacion"; row.Top.IsReadOnly = true; row.Top.Foreground = Brushes.DimGray; }
+                if (i == _zoneCount - 1) { row.Top.Text = "coronacion"; row.Top.IsReadOnly = true; row.Top.Foreground = RevitTheme.Muted; }
                 row.Top.TextChanged += (s, e) => Refresh();
                 Add(row, row.Top, r, 1);
 
@@ -524,7 +525,7 @@ namespace RetainingWallRebar
             {
                 bool isTop = row.Index == _zoneCount - 1;
                 row.Top.IsReadOnly = !manual || isTop;
-                row.Top.Foreground = row.Top.IsReadOnly ? Brushes.DimGray : Brushes.Black;
+                row.Top.Foreground = row.Top.IsReadOnly ? RevitTheme.Muted : RevitTheme.Text;
                 row.BackType.IsEnabled = back;
                 row.BackSpacing.IsEnabled = back;
                 row.FrontType.IsEnabled = front && !same;
@@ -761,7 +762,7 @@ namespace RetainingWallRebar
 
             var panel = new StackPanel();
             panel.Children.Add(grid);
-            _familyMessage = new TextBlock { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(4, 4, 4, 0), Foreground = Brushes.Firebrick };
+            _familyMessage = new TextBlock { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(4, 4, 4, 0), Foreground = RevitTheme.Error };
             panel.Children.Add(_familyMessage);
             panel.Children.Add(new TextBlock
             {
@@ -780,7 +781,7 @@ namespace RetainingWallRebar
                        "horizontales de esa altura se apoyan en el baston) o intercalados media separacion con las verticales en " +
                        "su misma linea (a trazos en el esquema; en el arranque la separacion real queda a la mitad).",
                 TextWrapping = TextWrapping.Wrap,
-                Foreground = Brushes.DimGray,
+                Foreground = RevitTheme.Muted,
                 Margin = new Thickness(4, 6, 4, 0)
             });
             group.Content = panel;
@@ -906,7 +907,7 @@ namespace RetainingWallRebar
             };
             panel.Children.Add(add);
 
-            _reinfMessage = new TextBlock { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(4, 2, 4, 0), Foreground = Brushes.Firebrick };
+            _reinfMessage = new TextBlock { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(4, 2, 4, 0), Foreground = RevitTheme.Error };
             panel.Children.Add(_reinfMessage);
             panel.Children.Add(new TextBlock
             {
@@ -918,7 +919,7 @@ namespace RetainingWallRebar
                        "Puntera y talon: longitud desde el borde de la zapata hacia dentro (puede pasar bajo la pantalla). Centro: " +
                        "longitud hacia la puntera y hacia el talon desde el eje de la pantalla en su base.",
                 TextWrapping = TextWrapping.Wrap,
-                Foreground = Brushes.DimGray,
+                Foreground = RevitTheme.Muted,
                 Margin = new Thickness(4, 4, 4, 0)
             });
             group.Content = panel;
@@ -942,7 +943,7 @@ namespace RetainingWallRebar
             if (_reinfStore.Count == 0)
             {
                 _reinfGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-                var none = new TextBlock { Text = "Sin refuerzos. Pulsa \"Anadir refuerzo\" para crear uno.", Foreground = Brushes.DimGray, Margin = Pad };
+                var none = new TextBlock { Text = "Sin refuerzos. Pulsa \"Anadir refuerzo\" para crear uno.", Foreground = RevitTheme.Muted, Margin = Pad };
                 Grid.SetRow(none, 1); Grid.SetColumn(none, 0); Grid.SetColumnSpan(none, 9);
                 _reinfGrid.Children.Add(none);
             }
@@ -1101,7 +1102,7 @@ namespace RetainingWallRebar
                                  "Los comodines vacios se quitan con su separador.";
             _partition.TextChanged += (s, e) => Refresh();
             AddControl(grid, "Particion de las barras (plantilla)", _partition);
-            _partitionPreview = new TextBlock { Foreground = Brushes.DimGray, Margin = new Thickness(4, 0, 4, 4), TextWrapping = TextWrapping.Wrap };
+            _partitionPreview = new TextBlock { Foreground = RevitTheme.Muted, Margin = new Thickness(4, 0, 4, 4), TextWrapping = TextWrapping.Wrap };
             int pr = grid.RowDefinitions.Count;
             grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             Grid.SetRow(_partitionPreview, pr); Grid.SetColumn(_partitionPreview, 0); Grid.SetColumnSpan(_partitionPreview, 2);
@@ -1196,7 +1197,7 @@ namespace RetainingWallRebar
                        "para ver que hace. Cada barra se comprueba contra el solido completo: si alguna queda fuera del " +
                        "hormigon, el elemento entero se deshace.",
                 TextWrapping = TextWrapping.Wrap,
-                Foreground = Brushes.DimGray,
+                Foreground = RevitTheme.Muted,
                 Margin = new Thickness(4, 6, 4, 0)
             };
             int r = grid.RowDefinitions.Count;
