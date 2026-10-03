@@ -154,12 +154,22 @@ namespace RetainingWallRebar
         public List<StemZoneCfg> StemHorizontalZones { get; set; } = new List<StemZoneCfg>();
 
         /// <summary>
-        /// Plantilla del parametro Particion de cada barra. Comodines: {marca} (Marca del
-        /// elemento; si esta vacia se usa el Id), {id}, {tipo} (nombre del tipo), {familia},
-        /// {ala} ("ala 1" / "ala 2" en esquineros, vacio en muros rectos) y {conjunto}
-        /// (nombre del juego de barras). Los comodines vacios se eliminan con sus separadores.
+        /// Plantilla por defecto del contrato ARBA para este add-in: la categoria la pone el
+        /// anfitrion (MUROS o CIMIENTOS) y el prefijo es MCO; sin {codigo}, porque el detalle
+        /// del conjunto va en "ARBA - Codigo". Ejemplos: "MUROS - MCO-M1", "CIMIENTOS - MCO-M1".
         /// </summary>
-        public string PartitionTemplate { get; set; } = "MC-{marca}";
+        public const string DefaultPartitionTemplate = "{categoria} - {prefijo}-{marca}";
+
+        /// <summary>
+        /// Plantilla del parametro Particion de cada barra (comodines del comun en
+        /// Arba.Comun.PartitionName.Help): {categoria} (MUROS o CIMIENTOS segun el anfitrion),
+        /// {prefijo} (MCO), {marca} (Marca del elemento; si esta vacia se usa el Id), {id},
+        /// {tipo} (nombre del tipo), {familia}, {ala} ("ala 1" / "ala 2" en esquineros, vacio en
+        /// muros rectos; alias de {codigo}) y {conjunto} (nombre del juego de barras). Los
+        /// comodines vacios se eliminan con sus separadores. El contrato exige que empiece por
+        /// "{categoria} - {prefijo}-"; la ventana avisa si no.
+        /// </summary>
+        public string PartitionTemplate { get; set; } = DefaultPartitionTemplate;
 
         /// <summary>Refuerzos transversales cortos de zapata (lista, puede estar vacia).</summary>
         public List<FootingReinfCfg> FootingReinforcements { get; set; } = new List<FootingReinfCfg>();
@@ -371,7 +381,7 @@ namespace RetainingWallRebar
                 if (f.CrownLegMm < 0) f.CrownLegMm = 0;
                 if (f.GapMm < 0) f.GapMm = 0;
             }
-            if (string.IsNullOrWhiteSpace(PartitionTemplate)) PartitionTemplate = "MC-{marca}";
+            if (string.IsNullOrWhiteSpace(PartitionTemplate)) PartitionTemplate = DefaultPartitionTemplate;
             if (!StemZoneModeManual) StemZoneMode = "auto";
         }
 

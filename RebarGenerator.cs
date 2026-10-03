@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using Arba.Comun;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.DB.Structure;
 
@@ -555,7 +556,8 @@ namespace RetainingWallRebar
             else
                 rb.GetShapeDrivenAccessor().SetLayoutAsSingle();
 
-            Finish(c.Doc, rb, c.Partition(SetName(c, name)));
+            string setName = SetName(c, name);
+            Finish(c, rb, c.Partition(setName), Code(c, setName));
             c.Result.Created.Add(new CreatedSet { Id = rb.Id, Name = name, Radius = r });
         }
 
@@ -692,16 +694,27 @@ namespace RetainingWallRebar
             }
         }
 
-        private static void Finish(Document doc, Rebar r, string partition)
+        /// <summary>ARBA - Codigo de un conjunto: el ala del esquinero (si la hay) y el nombre del juego de barras.</summary>
+        private static string Code(Ctx c, string setName) =>
+            string.IsNullOrEmpty(c.S.Label) ? setName : c.S.Label + " " + setName;
+
+        /// <summary>
+        /// Contrato ARBA en el conjunto recien creado: Particion por el parametro predefinido
+        /// (NUMBER_PARTITION_PARAM, con respaldo por nombre; antes se buscaba "Partition" y en
+        /// Revit en espanol no se escribia), ARBA - Origen = MUROS DE CONTENCION, ARBA - Codigo
+        /// = conjunto (y ala) y Metrado - Elemento con la categoria del anfitrion de ESTA barra
+        /// (c.Host: en un esquinero, el de su ala).
+        /// </summary>
+        private static void Finish(Ctx c, Rebar r, string partition, string code)
         {
-            Parameter p = r.LookupParameter("Partition");
-            if (p != null && !p.IsReadOnly && !string.IsNullOrEmpty(partition)) p.Set(partition);
+            ArbaPartition.Write(r, partition);
+            ArbaOrigin.WriteFor(r, c.Host, ArbaContract.MurosContencion, code);
 
             // Rebar.SetSolidInView se elimino de la API (obsoleto en 2023, ausente desde 2024).
             // La armadura ya se muestra solida en vistas 3D con nivel de detalle Fino;
             // si hiciera falta, se sobreescribe el nivel de detalle de la categoria
             // Structural Rebar en la vista.
-            try { r.SetUnobscuredInView(doc.ActiveView, true); } catch { }
+            try { r.SetUnobscuredInView(c.Doc.ActiveView, true); } catch { }
         }
 
         public static RebarBarType FindBarType(Document doc, string name)
@@ -711,26 +724,11 @@ namespace RetainingWallRebar
                 throw new InvalidOperationException(
                     "El proyecto no tiene ningun tipo de barra (RebarBarType). Carga una familia de armadura primero.");
 
-            string match = MatchName(all.Select(b => b.Name), name);
+            string match = NameMatch.First(all.Select(b => b.Name), name);
             if (match == null)
                 throw new InvalidOperationException(
                     "el tipo de barra \"" + name + "\" no existe en este proyecto; elige uno de los cargados en la ventana");
             return all.First(b => b.Name == match);
-        }
-
-        /// <summary>
-        /// Nombre de tipo de barra que corresponde a "name": coincidencia exacta, si no
-        /// parcial (sin distinguir mayusculas); null si no hay ninguna. La ventana usa la
-        /// misma regla para que el preview muestre el diametro que despues se creara, y
-        /// nunca se sustituye por otro tipo: sin coincidencia no se arma.
-        /// </summary>
-        public static string MatchName(IEnumerable<string> names, string name)
-        {
-            if (string.IsNullOrWhiteSpace(name)) return null;
-            var list = names.ToList();
-            string exact = list.FirstOrDefault(n => string.Equals(n, name, StringComparison.OrdinalIgnoreCase));
-            if (exact != null) return exact;
-            return list.FirstOrDefault(n => n.IndexOf(name, StringComparison.OrdinalIgnoreCase) >= 0);
         }
 
         /// <summary>Tipos de barra del proyecto, ordenados por nombre (para la interfaz).</summary>

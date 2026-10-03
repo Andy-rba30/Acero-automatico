@@ -25,7 +25,7 @@
   "openingReplaceVerticals": true,
   "openingReplaceHorizontals": true,
 
-  "partitionTemplate": "MC-{marca}",
+  "partitionTemplate": "{categoria} - {prefijo}-{marca}",
 
   "stemVerticalBack":  { "enabled": true, "barTypeName": "", "spacingMm": 200, "legMm": 900, "crownLegMm": 0 },
   "stemVerticalFront": { "enabled": true, "barTypeName": "", "spacingMm": 200, "legMm": 900, "crownLegMm": 0 },

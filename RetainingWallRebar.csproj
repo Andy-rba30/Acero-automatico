@@ -12,7 +12,24 @@
     <RootNamespace>RetainingWallRebar</RootNamespace>
     <!-- Revit ya carga sus propias DLL: no copiarlas al output -->
     <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
+    <!-- El submodulo external/ARBA-comun lo compila Arba.Comun.props (solo su carpeta src/): fuera del
+         glob por defecto para no incluir dos veces sus fuentes ni compilar sus tests -->
+    <DefaultItemExcludes>$(DefaultItemExcludes);external/**</DefaultItemExcludes>
   </PropertyGroup>
+
+  <!-- Codigo comun ARBA (submodulo git en external/ARBA-comun, etiqueta v1.0.0): contrato, particion,
+       ARBA - Origen / Codigo, parametros compartidos, migracion, cinta y tema. Se compila como fuente
+       dentro de este ensamblado (namespace Arba.Comun), nunca como DLL compartida. -->
+  <PropertyGroup>
+    <RevitVersion>2027</RevitVersion>
+    <!-- permite compilar el proyecto WPF fuera de Windows (CI, Linux) -->
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+  </PropertyGroup>
+  <Import Project="external/ARBA-comun/Arba.Comun.props" Condition="Exists('external/ARBA-comun/Arba.Comun.props')" />
+  <Target Name="ArbaComunPresente" BeforeTargets="BeforeBuild;CoreCompile">
+    <Error Condition="!Exists('external/ARBA-comun/Arba.Comun.props')"
+           Text="Falta el submodulo external/ARBA-comun (codigo comun ARBA). Clona con --recurse-submodules o ejecuta: git submodule update --init" />
+  </Target>
 
   <ItemGroup>
     <PackageReference Include="Nice3point.Revit.Api.RevitAPI" Version="2027.*" ExcludeAssets="runtime" />
@@ -25,8 +42,8 @@
     </None>
   </ItemGroup>
 
-  <!-- Copia automatica al directorio de add-ins de Revit al compilar en Debug -->
-  <Target Name="CopyToRevit" AfterTargets="Build" Condition="'$(Configuration)'=='Debug'">
+  <!-- Copia automatica al directorio de add-ins de Revit al compilar en Debug (solo en Windows) -->
+  <Target Name="CopyToRevit" AfterTargets="Build" Condition="'$(Configuration)'=='Debug' AND $([MSBuild]::IsOSPlatform('Windows'))">
     <PropertyGroup>
       <AddinDir>$(AppData)\Autodesk\Revit\Addins\2027\RetainingWallRebar\</AddinDir>
     </PropertyGroup>

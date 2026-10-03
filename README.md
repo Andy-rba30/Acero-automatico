@@ -321,8 +321,12 @@ Al lanzar el comando con uno o varios muros seleccionados se abre una ventana:
    (longitud que no asoma de la pantalla, barra acortada al ancho de la zapata)
    aparecen debajo. Las barras que se apartan por un refuerzo lo dicen en su
    etiqueta del esquema.
-5. **Recubrimientos** y **opciones**: horizontales por bandas, ala pasante por
-   defecto, pata de solape en esquina y malla de zapata en el bloque.
+5. **Recubrimientos** y **opciones**: plantilla de la partición (con un ejemplo
+   para el elemento marcado y un aviso en rojo si no sigue el contrato ARBA, ver
+   [Partición, origen y metrados](#partición-origen-y-metrados-contrato-arba)),
+   horizontales por bandas, ala pasante por defecto, pata de solape en esquina
+   y malla de zapata en el bloque. En el pie, la versión del contrato ARBA con
+   la que se compiló el add-in.
 6. **Armar** crea la armadura con esos valores solo para esta ejecución.
    **Guardar como valores por defecto** los escribe en el `config.json` que está
    junto a la DLL, de modo que la próxima vez la ventana arranque con ellos.
@@ -447,17 +451,70 @@ Las transversales y verticales se crean como **un solo elemento `Rebar` con arra
 a lo largo del tramo, así que el despiece queda limpio. En un esquinero cada ala
 genera su propio juego de conjuntos (nombres `ala 1 ...` / `ala 2 ...`).
 
+## Partición, origen y metrados (contrato ARBA)
+
+El add-in comparte con el resto de add-ins ARBA el código común
+[ARBA-comun](https://github.com/Andy-rba30/ARBA-comun) (submódulo git en
+`external/ARBA-comun`, etiqueta `v1.0.0`; su `CONTRATO.md` es la referencia y
+no se modifica desde aquí). En cada conjunto creado escribe:
+
+- **Partición** = `<CATEGORIA> - MCO-<marca>`. La categoría la pone el
+  **anfitrión**, no el add-in: un muro de contención modelado como muro queda en
+  `MUROS - MCO-M1` y uno modelado como cimentación en `CIMIENTOS - MCO-M1`
+  (igual que lo agrupa el plugin de metrados). `MCO` identifica a este add-in
+  (antes `MC-M1`; el prefijo `MUR` queda reservado a un futuro add-in de placas).
+  Sin marca se usa el Id. Se escribe por el parámetro predefinido de Partición,
+  así que funciona también en **Revit en español** (antes se buscaba "Partition"
+  por nombre y no se escribía nada). En un esquinero en L cada barra lleva la
+  partición del anfitrión al que pertenece.
+- **ARBA - Origen** = `MUROS DE CONTENCION`, **ARBA - Código** = conjunto y ala
+  (`vertical trasdos`, `ala 2 horizontal alzado intrados`, …) y
+  **Metrado - Elemento** = la categoría (`MUROS` / `CIMIENTOS`). Son parámetros
+  compartidos de ejemplar con los GUID fijos del contrato; el comando los crea
+  o completa en el proyecto al armar (grupo Datos, Gestionar > Parámetros de
+  proyecto) sin tocar tu archivo de parámetros compartidos. Con el plugin de
+  metrados integrado, las barras salen en "Metrado acero - Muros" o
+  "… - Cimentaciones" según el anfitrión.
+- **Rearmar**: si un elemento seleccionado ya tiene conjuntos con ese origen,
+  el comando pregunta una sola vez: **Borrar la armadura del add-in y rearmar**
+  (sin duplicados; el borrado va dentro de la subtransacción del elemento, así
+  que si el armado nuevo se deshace por una barra fuera del hormigón, la
+  armadura anterior se conserva), **Conservar y armar encima** (duplica) o
+  Cancelar. Los elementos sin armadura previa se arman en cualquier caso.
+- **Migración** de modelos anteriores (barras `MC-M1`, sin origen): el comando
+  las detecta y ofrece **Migrar la armadura antigua al contrato (sin rearmar)**:
+  convierte la partición en `MUROS - MCO-M1` / `CIMIENTOS - MCO-M1` y rellena
+  origen, código y `Metrado - Elemento` sin crear ni borrar barras; esos
+  elementos no se rearman en esa ejecución y a partir de ahí se reconocen como
+  propios. Con "Borrar y rearmar" las barras antiguas se migran primero para
+  reconocerlas y se borran con el resto. El botón "Migrar particiones y origen"
+  del plugin de metrados hace lo mismo para todo el modelo de una vez.
+- La ventana avisa en rojo si `partitionTemplate` no empieza por
+  `{categoria} - {prefijo}-` (incumple el contrato) y muestra en el pie la
+  versión del contrato con la que se compiló (`ArbaContract.Version`); el
+  informe final la repite.
+
 ## Montaje
 
-1. `dotnet build -c Debug` — el `.csproj` ya copia la DLL, el `config.json` y el
-   `.addin` a `%AppData%\Autodesk\Revit\Addins\2027\`.
-2. Abre Revit (si estaba abierto, ciérralo y vuelve a abrirlo: los add-ins se
-   cargan al arrancar). Aparece la pestaña **ARBA** con el botón **Armar muro de
-   contención** (`RibbonApp`, entrada de tipo Application del `.addin`). El
-   comando sigue también en **Add-Ins → External Tools**.
-3. Selecciona uno o varios muros y pulsa el botón.
-4. Si no seleccionas nada antes, el comando te pide que elijas.
-5. Revisa el diagnóstico y el armado en la ventana y pulsa **Armar**.
+1. Clona con el submódulo del código común: `git clone --recurse-submodules …`
+   (en un clon ya hecho, `git submodule update --init`). `external/ARBA-comun`
+   queda en la etiqueta `v1.0.0`; sin él el proyecto no compila y el `.csproj`
+   lo dice. Para subir de versión: `git -C external/ARBA-comun checkout v1.x.y`
+   y commit del puntero.
+2. `dotnet build -c Debug` — el `.csproj` ya copia la DLL, el `config.json` y el
+   `.addin` a `%AppData%\Autodesk\Revit\Addins\2027\` (solo en Windows; en
+   Linux/CI compila igual gracias a `EnableWindowsTargeting`).
+3. Abre Revit (si estaba abierto, ciérralo y vuelve a abrirlo: los add-ins se
+   cargan al arrancar). Aparece la pestaña **ARBA**, panel **Acero**, con el
+   desplegable **Acero** y dentro el botón **Muro de contencion**, junto a los
+   botones de los demás add-ins ARBA instalados (`RibbonApp`, entrada de tipo
+   Application del `.addin`). El comando sigue también en **Add-Ins → External
+   Tools**.
+4. Selecciona uno o varios muros y pulsa el botón.
+5. Si no seleccionas nada antes, el comando te pide que elijas.
+6. Revisa el diagnóstico y el armado en la ventana y pulsa **Armar**. Si algún
+   elemento ya tenía armadura de este add-in, antes pregunta si borrarla y
+   rearmar, conservarla o migrar la antigua (ver arriba).
 
 Requisitos previos en el modelo:
 
@@ -505,11 +562,16 @@ Requisitos previos en el modelo:
   media separación con las verticales en su misma línea. Un `cutLengthMm` > 0
   en una vertical de un `config.json` antiguo se convierte en un bastón activo
   con esos valores.
-- `partitionTemplate`: plantilla del parámetro Partición de cada barra. Comodines
-  `{marca}` (Marca del muro; si está vacía, su Id), `{id}`, `{tipo}`, `{familia}`,
-  `{ala}` (ala 1 / ala 2 en esquineros) y `{conjunto}` (nombre del juego de
-  barras). Los comodines vacíos se eliminan con su separador. Por defecto
-  `MC-{marca}`.
+- `partitionTemplate`: plantilla del parámetro Partición de cada barra. Por
+  defecto `{categoria} - {prefijo}-{marca}` (contrato ARBA: `MUROS - MCO-M1` en
+  un muro, `CIMIENTOS - MCO-M1` en una cimentación; antes `MC-{marca}`).
+  Comodines: `{categoria}` (MUROS o CIMIENTOS según el anfitrión), `{prefijo}`
+  (MCO), `{marca}` (Marca del muro; si está vacía, su Id), `{id}`, `{tipo}`,
+  `{familia}`, `{ala}` (ala 1 / ala 2 en esquineros; alias de `{codigo}`) y
+  `{conjunto}` (nombre del juego de barras). Los comodines vacíos se eliminan
+  con su separador. Una plantilla que no empiece por `{categoria} - {prefijo}-`
+  incumple el contrato y la ventana lo avisa; vacía, se usa la del contrato.
+  Ver [Partición, origen y metrados](#partición-origen-y-metrados-contrato-arba).
 - `cornerThroughWing`: `"auto"` (ala de tramo recto más largo), `"1"` o `"2"`.
 - `cornerLapDiameters` (40) y `cornerLapMinMm` (300): pata de solape de los
   horizontales en la esquina.

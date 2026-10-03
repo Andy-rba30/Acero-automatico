@@ -6,6 +6,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using Arba.Comun;
 
 namespace RetainingWallRebar
 {
@@ -78,7 +79,7 @@ namespace RetainingWallRebar
         private Button _buildButton;
         private TextBox _openFactor, _openSpacing, _openLdDia, _openLdMin;
         private CheckBox _openVert, _openHor;
-        private TextBlock _partitionPreview;
+        private TextBlock _partitionPreview, _partitionWarning;
 
         /// <summary>Texto del diagnostico y etiqueta de tipo de cada fila, para actualizarlos al cambiar el modo de cruce.</summary>
         private readonly Dictionary<HostAnalysis, (System.Windows.Documents.Run kind, System.Windows.Documents.Run detail)> _itemRuns
@@ -495,7 +496,7 @@ namespace RetainingWallRebar
         {
             var cb = new ComboBox { IsEditable = false, Margin = Pad, MinWidth = 150, Tag = current ?? "" };
             foreach (string t in _barTypes) cb.Items.Add(TypeDisplay(t));
-            string match = RebarGenerator.MatchName(_barTypes, current);
+            string match = NameMatch.First(_barTypes, current);
             cb.SelectedIndex = match != null ? _barTypes.IndexOf(match) : -1;
             cb.SelectionChanged += (s, e) => Dispatcher.BeginInvoke(new Action(Refresh));
             return cb;
@@ -639,7 +640,7 @@ namespace RetainingWallRebar
         /// </summary>
         private double DiameterFt(string name)
         {
-            string match = RebarGenerator.MatchName(_barTypes, name);
+            string match = NameMatch.First(_barTypes, name);
             return match != null && _diametersMm.TryGetValue(match, out double mm) ? WallSection.Mm(mm) : 0;
         }
 
@@ -1096,17 +1097,31 @@ namespace RetainingWallRebar
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
             _partition = new TextBox { Text = _cfg.PartitionTemplate ?? "", Margin = Pad, MinWidth = 220, HorizontalAlignment = HorizontalAlignment.Stretch };
-            _partition.ToolTip = "Parametro Particion de cada barra (agrupa la armadura por elemento en tablas y numeracion). Comodines: " +
-                                 "{marca} (Marca del muro; si esta vacia, su Id), {id}, {tipo} (nombre del tipo), {familia}, " +
-                                 "{ala} (ala 1 / ala 2 en esquineros), {conjunto} (vertical trasdos, transversal zapata inferior...). " +
-                                 "Los comodines vacios se quitan con su separador.";
-            _partition.TextChanged += (s, e) => Refresh();
+            _partition.ToolTip = "Parametro Particion de cada barra (agrupa la armadura por elemento en tablas y numeracion). " +
+                                 "Contrato ARBA " + ArbaContract.Version + ": la plantilla empieza por {categoria} - {prefijo}- " +
+                                 "(MUROS - MCO-M1 en un muro, CIMIENTOS - MCO-M1 en una cimentacion). Comodines: " + PartitionName.Help +
+                                 " En este add-in {ala} es ala 1 / ala 2 en esquineros (vacio en muros rectos) y {conjunto} " +
+                                 "vertical trasdos, transversal zapata inferior... Los comodines vacios se quitan con su separador.";
+            _partition.TextChanged += (s, e) => { UpdatePartitionWarning(); Refresh(); };
             AddControl(grid, "Particion de las barras (plantilla)", _partition);
             _partitionPreview = new TextBlock { Foreground = RevitTheme.Muted, Margin = new Thickness(4, 0, 4, 4), TextWrapping = TextWrapping.Wrap };
             int pr = grid.RowDefinitions.Count;
             grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             Grid.SetRow(_partitionPreview, pr); Grid.SetColumn(_partitionPreview, 0); Grid.SetColumnSpan(_partitionPreview, 2);
             grid.Children.Add(_partitionPreview);
+            _partitionWarning = new TextBlock
+            {
+                Text = "La plantilla no empieza por {categoria} - {prefijo}-: incumple el contrato ARBA " + ArbaContract.Version +
+                       " y las barras no se agruparan como las del resto de add-ins ni en el plugin de metrados.",
+                Foreground = RevitTheme.Error,
+                Margin = new Thickness(4, 0, 4, 4),
+                TextWrapping = TextWrapping.Wrap
+            };
+            pr = grid.RowDefinitions.Count;
+            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            Grid.SetRow(_partitionWarning, pr); Grid.SetColumn(_partitionWarning, 0); Grid.SetColumnSpan(_partitionWarning, 2);
+            grid.Children.Add(_partitionWarning);
+            UpdatePartitionWarning();
 
             _band = AddLabeled(grid, "Horizontales del alzado por bandas (mm, 0 = barra a barra)", _cfg.StemHorizontalBandMm);
             _band.ToolTip = "Con bandas, cada tramo se agrupa en arrays de esa altura: menos elementos, pero las barras de cada " +
@@ -1209,6 +1224,13 @@ namespace RetainingWallRebar
             return group;
         }
 
+        /// <summary>Aviso en rojo si la plantilla de particion no sigue el contrato ARBA ({categoria} - {prefijo}-...).</summary>
+        private void UpdatePartitionWarning()
+        {
+            if (_partitionWarning == null || _partition == null) return;
+            _partitionWarning.Visibility = ArbaPartition.TemplateFollowsContract(_partition.Text) ? Visibility.Collapsed : Visibility.Visible;
+        }
+
         private UIElement BuildButtons()
         {
             var panel = new Grid();
@@ -1222,6 +1244,19 @@ namespace RetainingWallRebar
             save.Click += OnSave;
             Grid.SetColumn(save, 0);
             panel.Children.Add(save);
+
+            // pie: version del contrato ARBA con la que se compilo este add-in
+            var contract = new TextBlock
+            {
+                Text = "Contrato ARBA " + ArbaContract.Version + "  |  Particion " + AppConfig.DefaultPartitionTemplate +
+                       " (MUROS - MCO-M1 / CIMIENTOS - MCO-M1)  |  ARBA - Origen " + ArbaContract.MurosContencion.Origin,
+                Foreground = RevitTheme.Muted,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(12, 0, 6, 0),
+                TextTrimming = TextTrimming.CharacterEllipsis
+            };
+            Grid.SetColumn(contract, 1);
+            panel.Children.Add(contract);
 
             int ok = _items.Count(i => i.CanBuildWith(_cfg));
             var build = new Button
@@ -1324,7 +1359,7 @@ namespace RetainingWallRebar
             if (TryNum(_lapMin, "Solape en esquina (minimo mm)", 0, errors, out v)) target.CornerLapMinMm = v;
 
             string tpl = (_partition.Text ?? "").Trim();
-            if (tpl.Length == 0) errors?.Add("Particion: escribe una plantilla (por ejemplo MC-{marca})");
+            if (tpl.Length == 0) errors?.Add("Particion: escribe una plantilla (por ejemplo " + AppConfig.DefaultPartitionTemplate + ")");
             else target.PartitionTemplate = tpl;
             target.CornerThroughWing = _through.SelectedIndex == 1 ? "1" : _through.SelectedIndex == 2 ? "2" : "auto";
             target.CornerFootingMesh = _mesh.SelectedIndex == 1 ? "both" : "through";

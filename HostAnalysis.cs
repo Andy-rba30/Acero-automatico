@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using Arba.Comun;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.DB.Structure;
 
@@ -118,13 +119,21 @@ namespace RetainingWallRebar
                    " mm de recorrido sin armar por este muro)";
         }
 
-        /// <summary>Particion de un juego de barras de este elemento segun la plantilla de la configuracion.</summary>
+        /// <summary>
+        /// Particion de un juego de barras de este elemento segun la plantilla de la configuracion
+        /// y el contrato ARBA: la categoria la pone el anfitrion (muro -> MUROS, cimentacion ->
+        /// CIMIENTOS), el prefijo es MCO, {marca} cae al Id si la marca esta vacia, {ala} (alias de
+        /// {codigo}) es el ala del esquinero y {conjunto} el nombre del juego de barras. Si una
+        /// plantilla personalizada dejara el texto vacio, respaldo "MURO <id>".
+        /// </summary>
         public string Partition(AppConfig cfg, string wing, string setName)
         {
-            return PartitionName.Expand(cfg.PartitionTemplate, new PartitionName.Source
-            {
-                Mark = Mark, Id = Host.Id.ToString(), TypeName = TypeName, FamilyName = FamilyName, Wing = wing, SetName = setName
-            });
+            string p = ArbaPartition.BuildFor(Host, ArbaContract.MurosContencion, cfg.PartitionTemplate,
+                new PartitionName.Source
+                {
+                    Mark = Mark, TypeName = TypeName, FamilyName = FamilyName, SetName = setName, Code = wing
+                });
+            return string.IsNullOrWhiteSpace(p) ? "MURO " + Host.Id.Value : p;
         }
 
         /// <summary>
