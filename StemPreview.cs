@@ -58,6 +58,15 @@ namespace RetainingWallRebar
         private const double FtToM = 0.3048;
         private const double LabelColumn = 118;
 
+        /// <summary>
+        /// Por encima de este numero de barras en una cara de un tramo (o cuando los puntos
+        /// se solaparian en pantalla) la cara se dibuja como una franja continua: un solo
+        /// elemento en vez de miles. Al teclear una separacion ("100" pasa por "1") salen
+        /// mas de 7000 barras por cara y crear una elipse con tooltip por cada una
+        /// bloqueaba la ventana varios segundos.
+        /// </summary>
+        private const int DenseLimit = 600;
+
         public static readonly Brush[] ZoneBrushes =
         {
             new SolidColorBrush(Color.FromRgb(0x3B, 0x6F, 0xB6)),
@@ -222,7 +231,7 @@ namespace RetainingWallRebar
             _infos.Clear();
             DrawConcrete(X, Y);
             DrawFixedFamilies(k, X, Y);
-            DrawZones(k, W, X, Y);
+            DrawZones(k, W, H, X, Y);
             DrawSelection(W, H, X, Y);
 
             // textos fijos
@@ -309,7 +318,10 @@ namespace RetainingWallRebar
             Children.Add(concrete);
         }
 
-        private void DrawZones(double k, double W, Func<double, double> X, Func<double, double> Y)
+        /// <summary>Cota de una barra respecto a la cara superior de la zapata ("+1.25", "-0.30").</summary>
+        private string Cota(double v) => (v < _s.FootingTop ? "-" : "+") + M(Math.Abs(v - _s.FootingTop));
+
+        private void DrawZones(double k, double W, double H, Func<double, double> X, Func<double, double> Y)
         {
             if (_layout == null || _layout.Zones.Count == 0) return;
 
@@ -363,18 +375,44 @@ namespace RetainingWallRebar
                 {
                     bool back = f == 0;
                     ResolvedFace rf = z.Face(back);
-                    if (rf == null) continue;
+                    if (rf == null || rf.Heights.Count == 0) continue;
                     bool useU0 = back ? _s.HeelAtU0 : !_s.HeelAtU0;
                     double sign = useU0 ? +1 : -1;
                     double r = Math.Max(rf.Db * 0.5 * k, 2.5);
+                    int n = rf.Heights.Count;
+                    double U(double v) => (useU0 ? _s.FaceU0(v) : _s.FaceU1(v)) + sign * (SectionBars.HorizontalOffset(_s, _cfg, back, v, rf.Db, _diameterFt) + rf.Db * 0.5);
+                    string head = "Horizontal " + (back ? "trasdos" : "intrados") + " · Tramo " + (z.Index + 1) + "\n" + rf.BarTypeName +
+                                  " @" + WallSection.ToMm(rf.Spacing) + " mm max., real " + WallSection.ToMm(rf.RealSpacing) + " mm · " +
+                                  n + " barras en el tramo" + (rf.FootingCount > 0 ? " (" + rf.FootingCount + " en la zapata)" : "");
+
+                    // Tan juntas que los puntos se solaparian en pantalla, o miles de ellas
+                    // (una separacion a medio teclear): una sola franja de la primera a la
+                    // ultima barra, con los datos de todas, en vez de un elemento por barra.
+                    if (n > 1 && (rf.RealSpacing * k < 2 * r || n > DenseLimit))
+                    {
+                        double v0 = rf.Heights[0], v1 = rf.Heights[n - 1];
+                        string tip = head + "\nde cota " + Cota(v0) + " a " + Cota(v1) + " m\n(tan juntas que se dibujan como una franja continua)";
+                        var strip = new Polyline
+                        {
+                            Stroke = brush, StrokeThickness = 2 * r, StrokeLineJoin = PenLineJoin.Round,
+                            Opacity = Dimmed(key) ? 0.3 : 1,
+                            ToolTip = tip,
+                            Tag = Info(key, tip, U((v0 + v1) * 0.5), (v0 + v1) * 0.5)
+                        };
+                        // la cara es recta, pero el apoyo del horizontal cambia a la altura del baston: se sigue por puntos
+                        int step = Math.Max(1, n / 200);
+                        for (int i = 0; i < n; i += step) strip.Points.Add(new Point(X(U(rf.Heights[i])), Y(rf.Heights[i])));
+                        if ((n - 1) % step != 0) strip.Points.Add(new Point(X(U(v1)), Y(v1)));
+                        Children.Add(strip);
+                        continue;
+                    }
+
                     foreach (double v in rf.Heights)
                     {
-                        double u = (useU0 ? _s.FaceU0(v) : _s.FaceU1(v)) + sign * (SectionBars.HorizontalOffset(_s, _cfg, back, v, rf.Db, _diameterFt) + rf.Db * 0.5);
-                        string tip = "Horizontal " + (back ? "trasdos" : "intrados") + " · Tramo " + (z.Index + 1) + "\n" + rf.BarTypeName +
-                                     " @" + WallSection.ToMm(rf.Spacing) + " mm max., real " + WallSection.ToMm(rf.RealSpacing) + " mm · " +
-                                     rf.Heights.Count + " barras en el tramo" +
-                                     (rf.FootingCount > 0 ? " (" + rf.FootingCount + " en la zapata)" : "") +
-                                     "\ncota " + (v < _s.FootingTop ? "-" : "+") + M(Math.Abs(v - _s.FootingTop)) + " m";
+                        double y = Y(v);
+                        if (y < -r || y > H + r) continue;   // fuera de la vista (con zoom): no hace falta crear el elemento
+                        double u = U(v);
+                        string tip = head + "\ncota " + Cota(v) + " m";
                         var dot = new Ellipse
                         {
                             Width = 2 * r, Height = 2 * r,
@@ -384,7 +422,7 @@ namespace RetainingWallRebar
                             Tag = Info(key, tip, u, v)
                         };
                         SetLeft(dot, X(u) - r);
-                        SetTop(dot, Y(v) - r);
+                        SetTop(dot, y - r);
                         Children.Add(dot);
                     }
                 }
@@ -439,6 +477,21 @@ namespace RetainingWallRebar
                 double r = Math.Max(l.Db * 0.5 * k, 2);
                 string tipL = "Longitudinal zapata " + (top ? "superior" : "inferior") + "\n" + lg.BarTypeName +
                               " @" + lg.SpacingMm.ToString("0") + " mm · " + l.Count + " barras" + Shifted(l.Shift);
+                if (l.Count > 1 && (l.Span / (l.Count - 1) * k < 2 * r || l.Count > DenseLimit))
+                {
+                    // tan juntas que se solaparian (o miles, con una separacion a medio teclear): una franja
+                    string tipS = tipL + "\n(tan juntas que se dibujan como una franja continua)";
+                    var strip = new Line
+                    {
+                        X1 = X(l.UAt(0)), Y1 = Y(l.V), X2 = X(l.UAt(l.Count - 1)), Y2 = Y(l.V),
+                        Stroke = KindBrush("longitudinal"), StrokeThickness = 2 * r, StrokeStartLineCap = PenLineCap.Round, StrokeEndLineCap = PenLineCap.Round,
+                        Opacity = Dimmed("longitudinal") ? 0.3 : 1,
+                        ToolTip = tipS,
+                        Tag = Info("longitudinal", tipS, (l.UAt(0) + l.UAt(l.Count - 1)) * 0.5, l.V)
+                    };
+                    Children.Add(strip);
+                    continue;
+                }
                 for (int i = 0; i < l.Count; i++)
                 {
                     var dot = new Ellipse

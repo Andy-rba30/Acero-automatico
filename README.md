@@ -278,7 +278,11 @@ verticales no cambian: una sola distribución y diámetro en toda la altura.
 
 ## Interfaz gráfica
 
-Al lanzar el comando con uno o varios muros seleccionados se abre una ventana:
+Al lanzar el comando con uno o varios muros seleccionados se abre una ventana
+dividida a mitades, como el resto de add-ins de acero: arriba la lista de
+elementos, a la izquierda las opciones (con scroll) y a la derecha, a toda la
+altura, el esquema del muro marcado. El separador entre las dos mitades se
+puede arrastrar.
 
 1. **Elementos seleccionados**: cada uno con su diagnóstico (tramo recto con sus
    medidas, esquinero en L con las medidas de cada ala, o `SIN ARMAR` con el
@@ -289,7 +293,8 @@ Al lanzar el comando con uno o varios muros seleccionados se abre una ventana:
    editable), número de tramos (1, 2 o 3), caras activas, "mismo armado en las
    dos caras" y una tabla con una fila por tramo (el superior en la primera
    fila, igual que en el esquema): cota superior, altura resultante, tipo de
-   barra y separación por cara, y número de barras por cara. A la derecha, el
+   barra y separación por cara, y número de barras por cara. En la mitad
+   derecha de la ventana, el
    **esquema** de la sección real del muro marcado: hormigón, una banda de color
    por tramo, las cotas de los límites y cada barra horizontal como un punto a
    su altura y con su diámetro, más el resto del armado tal y como se creará,
@@ -302,8 +307,13 @@ Al lanzar el comando con uno o varios muros seleccionados se abre una ventana:
    su familia y aparece junto a ella una etiqueta con sus datos (familia, cara,
    tipo, separación, tramo y cota en los horizontales); clic en el hormigón
    quita la selección. Las casillas con valores no válidos se marcan en rojo al
-   escribir. Se redibuja con cada cambio; al pasar el ratón por una fila
-   se resalta su tramo, y cada punto muestra su tramo, tipo y cota. Debajo de
+   escribir. Se redibuja con cada cambio (al teclear en una casilla espera a
+   que dejes de escribir un momento, así "100" no se recalcula con "1" y "10"
+   por el camino); al pasar el ratón por una fila se resalta su tramo, y cada
+   punto muestra su tramo, tipo y cota. Si las barras de una cara quedan tan
+   juntas que los puntos se solaparían en pantalla, o son miles (una
+   separación a medio escribir), esa cara se dibuja como una franja continua
+   con los datos de todas, en vez de un punto por barra. Debajo de
    la tabla aparecen los avisos (tramo sin barras, cota fuera de la altura,
    cotas no crecientes).
 3. **Verticales del alzado y zapata**: para cada una de las ocho familias, si
