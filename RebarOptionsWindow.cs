@@ -6,6 +6,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Threading;
 using Arba.Comun;
 
 namespace RetainingWallRebar
@@ -102,6 +103,8 @@ namespace RetainingWallRebar
         private readonly Dictionary<HostAnalysis, Border> _itemRows = new Dictionary<HostAnalysis, Border>();
         private bool _building = true;
         private bool _refreshing;
+        /// <summary>Refresco diferido mientras se teclea en una caja (ver RefreshSoon).</summary>
+        private DispatcherTimer _refreshTimer;
         /// <summary>Tras intentar armar sin tipos de barra, las casillas vacias se marcan en rojo.</summary>
         private bool _strictTypes;
 
@@ -125,15 +128,17 @@ namespace RetainingWallRebar
                 _zoneStore[i] = (i < zones.Count ? zones[i] : zones[zones.Count - 1]).Clone();
 
             Title = "Armar muros de contencion";
-            Width = 1180;
-            Height = 820;
-            MinWidth = 960;
+            // ancha, para que el esquema ocupe media ventana a toda la altura (acotada a la pantalla)
+            Width = Math.Min(1860, SystemParameters.WorkArea.Width - 40);
+            Height = Math.Min(960, SystemParameters.WorkArea.Height - 40);
+            MinWidth = 1240;
             MinHeight = 600;
             WindowStartupLocation = WindowStartupLocation.CenterScreen;
             ShowInTaskbar = false;
             FontSize = 12;
 
             RevitTheme.Apply(this);
+            Closed += (s, e) => _refreshTimer?.Stop();
             Content = BuildRoot();
             _selected = _items.FirstOrDefault(i => i.CanBuild);
             if (_selected != null) SelectItem(_selected);
@@ -155,36 +160,98 @@ namespace RetainingWallRebar
             Grid.SetRow(elements, 0);
             root.Children.Add(elements);
 
-            var body = new StackPanel();
-            body.Children.Add(BuildZones());
-            body.Children.Add(BuildFamilies());
-            body.Children.Add(BuildReinforcements());
+            // Cuerpo a mitades, como en el resto de add-ins de acero: las opciones a la
+            // izquierda (con scroll) y el esquema a la derecha, a toda la altura. El
+            // separador se puede arrastrar; la columna de opciones no baja de lo que
+            // necesitan sus tablas para no cortar columnas.
+            var body = new Grid { Margin = new Thickness(0, 6, 0, 6) };
+            body.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star), MinWidth = 900 });
+            body.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            body.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star), MinWidth = 300 });
 
-            var two = new Grid { Margin = new Thickness(0, 6, 0, 0) };
-            two.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            two.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.4, GridUnitType.Star) });
-            UIElement covers = BuildCovers();
-            UIElement options = BuildOptions();
-            Grid.SetColumn(covers, 0);
-            Grid.SetColumn(options, 1);
-            two.Children.Add(covers);
-            two.Children.Add(options);
-            body.Children.Add(two);
+            UIElement preview = BuildPreview();
+            Grid.SetColumn(preview, 2);
+            body.Children.Add(preview);
 
+            var left = new StackPanel();
+            left.Children.Add(BuildZones());
+            left.Children.Add(BuildFamilies());
+            left.Children.Add(BuildReinforcements());
+            left.Children.Add(BuildCovers());
+            left.Children.Add(BuildOptions());
             var scroll = new ScrollViewer
             {
-                Content = body,
+                Content = left,
                 VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
                 HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
-                Margin = new Thickness(0, 6, 0, 6)
+                Margin = new Thickness(0, 0, 4, 0)
             };
-            Grid.SetRow(scroll, 1);
-            root.Children.Add(scroll);
+            Grid.SetColumn(scroll, 0);
+            body.Children.Add(scroll);
+
+            var splitter = new GridSplitter
+            {
+                Width = 6,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Stretch,
+                Background = RevitTheme.Border,
+                Margin = new Thickness(0, 0, 4, 0),
+                ShowsPreview = false
+            };
+            Grid.SetColumn(splitter, 1);
+            body.Children.Add(splitter);
+
+            Grid.SetRow(body, 1);
+            root.Children.Add(body);
 
             UIElement buttons = BuildButtons();
             Grid.SetRow(buttons, 2);
             root.Children.Add(buttons);
             return root;
+        }
+
+        /// <summary>
+        /// Esquema de la seccion, en la mitad derecha de la ventana y a toda la altura del
+        /// cuerpo, con su leyenda debajo (pasar el raton por una entrada resalta ese
+        /// elemento en el esquema).
+        /// </summary>
+        private UIElement BuildPreview()
+        {
+            var group = new GroupBox
+            {
+                Header = "Esquema (rueda: zoom · arrastrar: mover · doble clic: encajar · clic en una barra: datos)",
+                Padding = new Thickness(4),
+                Margin = new Thickness(0)
+            };
+            var panel = new DockPanel();
+            _previewCaption = new TextBlock { Text = "Esquema", FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 0, 0, 4), TextTrimming = TextTrimming.CharacterEllipsis };
+            DockPanel.SetDock(_previewCaption, Dock.Top);
+            panel.Children.Add(_previewCaption);
+
+            var legend = new WrapPanel { Margin = new Thickness(0, 4, 0, 0) };
+            foreach (var kind in StemPreview.Kinds)
+            {
+                var item = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 10, 2), Cursor = Cursors.Hand };
+                item.Children.Add(new Border { Width = 12, Height = 12, Background = kind.brush, CornerRadius = new CornerRadius(2), Margin = new Thickness(0, 0, 4, 0), VerticalAlignment = VerticalAlignment.Center });
+                item.Children.Add(new TextBlock { Text = kind.name, FontSize = 11, VerticalAlignment = VerticalAlignment.Center });
+                string key = kind.key;
+                item.MouseEnter += (s, e) => _preview.Highlight = key;
+                item.MouseLeave += (s, e) => _preview.Highlight = null;
+                legend.Children.Add(item);
+            }
+            var zonesLegend = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 10, 2) };
+            for (int i = 0; i < StemPreview.ZoneBrushes.Length; i++)
+                zonesLegend.Children.Add(new Border { Width = 12, Height = 12, Background = StemPreview.ZoneBrushes[i], CornerRadius = new CornerRadius(2), Margin = new Thickness(0, 0, 2, 0), VerticalAlignment = VerticalAlignment.Center });
+            zonesLegend.Children.Add(new TextBlock { Text = "Tramos de horizontales", FontSize = 11, Margin = new Thickness(2, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center });
+            legend.Children.Insert(0, zonesLegend);
+            DockPanel.SetDock(legend, Dock.Bottom);
+            panel.Children.Add(legend);
+
+            // el esquema rellena todo lo que queda entre el titulo y la leyenda
+            _preview = new StemPreview { MinHeight = 300 };
+            panel.Children.Add(new Border { Child = _preview, BorderBrush = RevitTheme.Border, BorderThickness = new Thickness(1), Background = RevitTheme.Paper });
+            group.Content = panel;
+            return group;
         }
 
         private UIElement BuildElements()
@@ -303,12 +370,7 @@ namespace RetainingWallRebar
         private UIElement BuildZones()
         {
             var group = new GroupBox { Header = "Horizontales del alzado: reparto por tramos de altura", Padding = new Thickness(4) };
-            var grid = new Grid();
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(440) });
-
-            // --- controles ---
-            var left = new StackPanel { Margin = new Thickness(0, 0, 8, 0) };
+            var left = new StackPanel();
 
             var modeRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 2, 0, 2) };
             modeRow.Children.Add(new TextBlock { Text = "Reparto:", FontWeight = FontWeights.SemiBold, Margin = Pad, VerticalAlignment = VerticalAlignment.Center, Width = 70 });
@@ -368,46 +430,7 @@ namespace RetainingWallRebar
                 Foreground = RevitTheme.Muted,
                 Margin = new Thickness(4, 6, 4, 0)
             });
-            Grid.SetColumn(left, 0);
-            grid.Children.Add(left);
-
-            // --- esquema ---
-            var right = new Grid();
-            right.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-            right.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-            right.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-            _previewCaption = new TextBlock { Text = "Esquema", FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 0, 0, 2), TextTrimming = TextTrimming.CharacterEllipsis };
-            Grid.SetRow(_previewCaption, 0);
-            right.Children.Add(_previewCaption);
-            _preview = new StemPreview { MinHeight = 430 };
-            var frame = new Border { Child = _preview, BorderBrush = RevitTheme.Border, BorderThickness = new Thickness(1), Background = RevitTheme.Paper };
-            Grid.SetRow(frame, 1);
-            right.Children.Add(frame);
-
-            // leyenda: pasar el raton por una entrada resalta ese elemento en el esquema
-            var legend = new WrapPanel { Margin = new Thickness(0, 4, 0, 0) };
-            foreach (var kind in StemPreview.Kinds)
-            {
-                var item = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 10, 2), Cursor = Cursors.Hand };
-                item.Children.Add(new Border { Width = 12, Height = 12, Background = kind.brush, CornerRadius = new CornerRadius(2), Margin = new Thickness(0, 0, 4, 0), VerticalAlignment = VerticalAlignment.Center });
-                item.Children.Add(new TextBlock { Text = kind.name, FontSize = 11, VerticalAlignment = VerticalAlignment.Center });
-                string key = kind.key;
-                item.MouseEnter += (s, e) => _preview.Highlight = key;
-                item.MouseLeave += (s, e) => _preview.Highlight = null;
-                legend.Children.Add(item);
-            }
-            var zonesLegend = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 10, 2) };
-            for (int i = 0; i < StemPreview.ZoneBrushes.Length; i++)
-                zonesLegend.Children.Add(new Border { Width = 12, Height = 12, Background = StemPreview.ZoneBrushes[i], CornerRadius = new CornerRadius(2), Margin = new Thickness(0, 0, 2, 0), VerticalAlignment = VerticalAlignment.Center });
-            zonesLegend.Children.Add(new TextBlock { Text = "Tramos de horizontales", FontSize = 11, Margin = new Thickness(2, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center });
-            legend.Children.Insert(0, zonesLegend);
-            Grid.SetRow(legend, 2);
-            right.Children.Add(legend);
-
-            Grid.SetColumn(right, 1);
-            grid.Children.Add(right);
-
-            group.Content = grid;
+            group.Content = left;
             return group;
         }
 
@@ -417,11 +440,11 @@ namespace RetainingWallRebar
             _zoneGrid.RowDefinitions.Clear();
             _zoneRows.Clear();
 
-            string[] headers = { "Tramo", "Cota superior (m)", "Altura (m)", "Trasdos: tipo de barra", "sep. max. (mm)", "Intrados: tipo de barra", "sep. max. (mm)", "Barras / cara (sep. real)" };
+            string[] headers = { "Tramo", "Cota\nsuperior (m)", "Altura\n(m)", "Trasdos:\ntipo de barra", "sep. max.\n(mm)", "Intrados:\ntipo de barra", "sep. max.\n(mm)", "Barras / cara\n(sep. real)" };
             _zoneGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             for (int c = 0; c < headers.Length; c++)
             {
-                var h = new TextBlock { Text = headers[c], FontWeight = FontWeights.Bold, Margin = Pad };
+                var h = new TextBlock { Text = headers[c], FontWeight = FontWeights.Bold, Margin = Pad, VerticalAlignment = VerticalAlignment.Bottom };
                 Grid.SetRow(h, 0); Grid.SetColumn(h, c);
                 _zoneGrid.Children.Add(h);
             }
@@ -444,22 +467,24 @@ namespace RetainingWallRebar
                 row.Top = NumBox(z.TopMm > 0 ? z.TopMm / 1000.0 : 0);
                 row.Top.ToolTip = "Cota superior del tramo sobre la cara superior de la zapata";
                 if (i == _zoneCount - 1) { row.Top.Text = "coronacion"; row.Top.IsReadOnly = true; row.Top.Foreground = RevitTheme.Muted; }
-                row.Top.TextChanged += (s, e) => Refresh();
+                row.Top.TextChanged += (s, e) => RefreshSoon();
                 Add(row, row.Top, r, 1);
 
                 row.Height = new TextBlock { Text = "-", Margin = Pad, VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Right, MinWidth = 50 };
                 Add(row, row.Height, r, 2);
 
                 row.BackType = TypeBox(z.BackBarTypeName);
+                row.BackType.MinWidth = 120;
                 Add(row, row.BackType, r, 3);
                 row.BackSpacing = NumBox(z.BackSpacingMm);
-                row.BackSpacing.TextChanged += (s, e) => Refresh();
+                row.BackSpacing.TextChanged += (s, e) => RefreshSoon();
                 Add(row, row.BackSpacing, r, 4);
 
                 row.FrontType = TypeBox(z.FrontBarTypeName);
+                row.FrontType.MinWidth = 120;
                 Add(row, row.FrontType, r, 5);
                 row.FrontSpacing = NumBox(z.FrontSpacingMm);
-                row.FrontSpacing.TextChanged += (s, e) => Refresh();
+                row.FrontSpacing.TextChanged += (s, e) => RefreshSoon();
                 Add(row, row.FrontSpacing, r, 6);
 
                 row.Bars = new TextBlock { Text = "-", Margin = Pad, VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Right, MinWidth = 60 };
@@ -647,10 +672,30 @@ namespace RetainingWallRebar
         /// <summary>Recalcula el reparto con lo que hay en pantalla, actualiza la tabla y redibuja el esquema.</summary>
         private void Refresh()
         {
+            _refreshTimer?.Stop();
             if (_building || _refreshing) return;
             _refreshing = true;
             try { RefreshCore(); }
             finally { _refreshing = false; }
+        }
+
+        /// <summary>
+        /// Refresco diferido para las cajas de texto. Al escribir "100" sobre "200" la caja
+        /// pasa por "20", "2", "" y "1", y recalcular y redibujar con cada tecla era lo que
+        /// bloqueaba la ventana: con 1 mm de separacion salen miles de barras. Se espera a
+        /// que el usuario deje de teclear un momento y se refresca una sola vez; los
+        /// desplegables y casillas siguen refrescando al instante.
+        /// </summary>
+        private void RefreshSoon()
+        {
+            if (_building || _refreshing) return;
+            if (_refreshTimer == null)
+            {
+                _refreshTimer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromMilliseconds(300) };
+                _refreshTimer.Tick += (s, e) => { _refreshTimer.Stop(); Refresh(); };
+            }
+            _refreshTimer.Stop();
+            _refreshTimer.Start();
         }
 
         private void RefreshCore()
@@ -737,15 +782,15 @@ namespace RetainingWallRebar
         {
             var group = new GroupBox { Header = "Verticales del alzado y zapata", Padding = new Thickness(4), Margin = new Thickness(0, 6, 0, 0) };
             var grid = new Grid();
-            string[] headers = { "Familia", "Activa", "Tipo de barra", "Separacion (mm)", "Patilla / pata / anclaje (mm)", "Altura baston (mm)",
-                                 "Patilla coronacion (mm)", "Respecto a la vertical", "Hueco (mm)" };
+            string[] headers = { "Familia", "Activa", "Tipo de barra", "Separacion\n(mm)", "Patilla, pata\no anclaje (mm)", "Altura\nbaston (mm)",
+                                 "Patilla\ncoronacion (mm)", "Respecto a\nla vertical", "Hueco\n(mm)" };
             for (int c = 0; c < headers.Length; c++)
                 grid.ColumnDefinitions.Add(new ColumnDefinition { Width = c == 2 ? new GridLength(1, GridUnitType.Star) : GridLength.Auto });
 
             grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             for (int c = 0; c < headers.Length; c++)
             {
-                var h = new TextBlock { Text = headers[c], FontWeight = FontWeights.Bold, Margin = Pad };
+                var h = new TextBlock { Text = headers[c], FontWeight = FontWeights.Bold, Margin = Pad, VerticalAlignment = VerticalAlignment.Bottom };
                 Grid.SetRow(h, 0); Grid.SetColumn(h, c);
                 grid.Children.Add(h);
             }
@@ -798,7 +843,7 @@ namespace RetainingWallRebar
             BarFamilyCfg fam = select(_cfg);
             var row = new FamilyRow { Select = select, Name = name, HasLeg = leg, HasCut = cut, CutMin = cutMin, Embed = embed, HasCrown = crown, IsDowel = dowel };
 
-            var label = new TextBlock { Text = name, Margin = Pad, VerticalAlignment = VerticalAlignment.Center };
+            var label = new TextBlock { Text = name, Margin = Pad, VerticalAlignment = VerticalAlignment.Center, TextWrapping = TextWrapping.Wrap, MaxWidth = 165 };
             Grid.SetRow(label, r); Grid.SetColumn(label, 0);
             grid.Children.Add(label);
 
@@ -807,7 +852,7 @@ namespace RetainingWallRebar
             grid.Children.Add(row.Enabled);
 
             row.Type = TypeBox(fam.BarTypeName);
-            row.Type.MinWidth = 190;
+            row.Type.MinWidth = 140;
             Grid.SetRow(row.Type, r); Grid.SetColumn(row.Type, 2);
             grid.Children.Add(row.Type);
 
@@ -835,7 +880,7 @@ namespace RetainingWallRebar
 
             if (dowel)
             {
-                row.Stack = new ComboBox { Margin = Pad, MinWidth = 150, VerticalAlignment = VerticalAlignment.Center };
+                row.Stack = new ComboBox { Margin = Pad, MinWidth = 130, VerticalAlignment = VerticalAlignment.Center };
                 row.Stack.Items.Add("Apilado por dentro");
                 row.Stack.Items.Add("Intercalado en el mismo plano");
                 row.Stack.SelectedIndex = fam.Stacked ? 0 : 1;
@@ -871,11 +916,11 @@ namespace RetainingWallRebar
             // el esquema dibuja tambien verticales y zapata: se redibuja con cualquier cambio
             row.Enabled.Checked += (s, e) => Refresh();
             row.Enabled.Unchecked += (s, e) => Refresh();
-            row.Spacing.TextChanged += (s, e) => Refresh();
-            row.Leg.TextChanged += (s, e) => Refresh();
-            row.Cut.TextChanged += (s, e) => Refresh();
-            row.Crown.TextChanged += (s, e) => Refresh();
-            row.Gap.TextChanged += (s, e) => Refresh();
+            row.Spacing.TextChanged += (s, e) => RefreshSoon();
+            row.Leg.TextChanged += (s, e) => RefreshSoon();
+            row.Cut.TextChanged += (s, e) => RefreshSoon();
+            row.Crown.TextChanged += (s, e) => RefreshSoon();
+            row.Gap.TextChanged += (s, e) => RefreshSoon();
             if (row.Stack != null) row.Stack.SelectionChanged += (s, e) => { sync(null, null); Refresh(); };
 
             _rows.Add(row);
@@ -973,15 +1018,15 @@ namespace RetainingWallRebar
                 Put(row.Type, r, 2);
 
                 row.Spacing = NumBox(cfg.SpacingMm);
-                row.Spacing.TextChanged += (s, e) => Refresh();
+                row.Spacing.TextChanged += (s, e) => RefreshSoon();
                 Put(row.Spacing, r, 3);
 
                 row.L1 = NumBox(cfg.IsCenter ? cfg.ToeLengthMm : cfg.LengthMm);
-                row.L1.TextChanged += (s, e) => Refresh();
+                row.L1.TextChanged += (s, e) => RefreshSoon();
                 Put(row.L1, r, 4);
 
                 row.L2 = NumBox(cfg.HeelLengthMm);
-                row.L2.TextChanged += (s, e) => Refresh();
+                row.L2.TextChanged += (s, e) => RefreshSoon();
                 Put(row.L2, r, 5);
 
                 row.Stack = new ComboBox { Margin = Pad, MinWidth = 90 };
@@ -994,7 +1039,7 @@ namespace RetainingWallRebar
 
                 row.Gap = NumBox(cfg.GapMm);
                 row.Gap.ToolTip = "Hueco entre el refuerzo y la transversal. 0 = apoyado sobre la transversal, tocandola";
-                row.Gap.TextChanged += (s, e) => Refresh();
+                row.Gap.TextChanged += (s, e) => RefreshSoon();
                 Put(row.Gap, r, 7);
 
                 var remove = new Button { Content = "Quitar", Padding = new Thickness(8, 2, 8, 2), Margin = Pad };
@@ -1072,7 +1117,7 @@ namespace RetainingWallRebar
 
         private UIElement BuildCovers()
         {
-            var group = new GroupBox { Header = "Recubrimientos (mm)", Padding = new Thickness(4), Margin = new Thickness(0, 0, 3, 0) };
+            var group = new GroupBox { Header = "Recubrimientos (mm)", Padding = new Thickness(4), Margin = new Thickness(0, 6, 0, 0) };
             var grid = new Grid();
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -1084,16 +1129,17 @@ namespace RetainingWallRebar
             _covFootSide = AddLabeled(grid, "Zapata, laterales", _cfg.CoverFootingSideMm);
             _covEnd = AddLabeled(grid, "Extremos del tramo", _cfg.CoverEndMm);
             foreach (TextBox tb in new[] { _covStem, _covStemTop, _covFootTop, _covFootBot, _covFootSide })
-                tb.TextChanged += (s, e) => Refresh();
+                tb.TextChanged += (s, e) => RefreshSoon();
             group.Content = grid;
             return group;
         }
 
         private UIElement BuildOptions()
         {
-            var group = new GroupBox { Header = "Opciones de armado", Padding = new Thickness(4), Margin = new Thickness(3, 0, 0, 0) };
+            var group = new GroupBox { Header = "Opciones de armado", Padding = new Thickness(4), Margin = new Thickness(0, 6, 0, 0) };
             var grid = new Grid();
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            // etiquetas a ancho fijo (con salto de linea) para que las opciones quepan en media ventana
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(260) });
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
             _partition = new TextBox { Text = _cfg.PartitionTemplate ?? "", Margin = Pad, MinWidth = 220, HorizontalAlignment = HorizontalAlignment.Stretch };
@@ -1102,7 +1148,7 @@ namespace RetainingWallRebar
                                  "(MUROS - MCO-M1 en un muro, CIMIENTOS - MCO-M1 en una cimentacion). Comodines: " + PartitionName.Help +
                                  " En este add-in {ala} es ala 1 / ala 2 en esquineros (vacio en muros rectos) y {conjunto} " +
                                  "vertical trasdos, transversal zapata inferior... Los comodines vacios se quitan con su separador.";
-            _partition.TextChanged += (s, e) => { UpdatePartitionWarning(); Refresh(); };
+            _partition.TextChanged += (s, e) => { UpdatePartitionWarning(); RefreshSoon(); };
             AddControl(grid, "Particion de las barras (plantilla)", _partition);
             _partitionPreview = new TextBlock { Foreground = RevitTheme.Muted, Margin = new Thickness(4, 0, 4, 4), TextWrapping = TextWrapping.Wrap };
             int pr = grid.RowDefinitions.Count;
